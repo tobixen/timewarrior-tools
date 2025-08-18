@@ -1,0 +1,13 @@
+#!/bin/bash
+fromtag="$1"
+totag="$2"
+timespan="$3"
+[ -z "$timespan" ] && timespan=":year"
+ids=$(timew summary $timespan :id | grep -E " $fromtag[, ]" | perl -ne '/\s*(@\d+) / && print "$1 "')
+if [ -n "$ids" ]
+then
+	echo timew untag $ids $fromtag
+	timew untag $ids $fromtag
+	echo timew tag $ids $totag
+	timew tag $ids $totag
+fi
