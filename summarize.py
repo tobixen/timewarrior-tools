@@ -47,7 +47,7 @@ Examples:
   timew report summarize.py :yesterday
   REGEX="^4" timew report summarize.py :week
   ./summarize.py --regex="^4" --concat :yesterday
-  ./summarize.py --killtags="afk break" :week
+  ./summarize.py --killtags="afk,break" :week
         """
     )
     parser.add_argument('--regex', metavar='PATTERN',
@@ -55,9 +55,9 @@ Examples:
     parser.add_argument('--negregex', metavar='PATTERN',
                         help='Exclude tags matching this regex')
     parser.add_argument('--killtags', metavar='TAGS',
-                        help='Skip intervals containing these tags (space-separated)')
+                        help='Skip intervals containing these tags (comma-separated)')
     parser.add_argument('--ignoretags', metavar='TAGS',
-                        help='Remove these tags from output (space-separated)')
+                        help='Remove these tags from output (comma-separated)')
     parser.add_argument('--concat', action='store_true',
                         help='Combine all tags on an interval into a single key')
     parser.add_argument('--split', action='store_true',
@@ -231,11 +231,12 @@ def calculate_totals(input_stream, args):
                 continue
 
         if KILLTAGS:
-            if set(KILLTAGS.split(" ")).intersection(set(obj["tags"])):
+            killtags = {t.strip() for t in KILLTAGS.split(",")}
+            if killtags.intersection(set(obj["tags"])):
                 continue
 
         if IGNORETAGS:
-            for tag in IGNORETAGS.split(" "):
+            for tag in (t.strip() for t in IGNORETAGS.split(",")):
                 if tag in obj["tags"]:
                     obj["tags"].remove(tag)
 

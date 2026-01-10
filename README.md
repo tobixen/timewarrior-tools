@@ -18,8 +18,8 @@ A timewarrior report extension that summarizes tracked time by tag.
 |--------|---------|-------------|
 | `--regex` | `REGEX` | Only include tags matching this regex |
 | `--negregex` | `NEGREGEX` | Exclude tags matching this regex |
-| `--killtags` | `KILLTAGS` | Skip intervals containing these tags (space-separated) |
-| `--ignoretags` | `IGNORETAGS` | Remove these tags from output (space-separated) |
+| `--killtags` | `KILLTAGS` | Skip intervals containing these tags (comma-separated) |
+| `--ignoretags` | `IGNORETAGS` | Remove these tags from output (comma-separated) |
 | `--concat` | `CONCAT` | Combine all tags on an interval into a single key |
 | `--split` | `SPLIT` | Divide time equally among tags on an interval |
 
@@ -32,7 +32,7 @@ REGEX="^4" timew report summarize.py :week
 
 # Direct invocation (auto re-execs via timew report)
 summarize.py --regex="^4" --concat :yesterday
-summarize.py --killtags="afk break" :week
+summarize.py --killtags="afk,break" :week
 ```
 
 ### timew-change-tag
