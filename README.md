@@ -4,7 +4,7 @@ Various scripts and tools for use with [Timewarrior](https://timewarrior.net/).
 
 ## Scripts
 
-### myday.py (summarize report)
+### summarize.py
 
 A timewarrior report extension that summarizes tracked time by tag. Provides flexible filtering and grouping options via environment variables:
 
@@ -15,7 +15,7 @@ A timewarrior report extension that summarizes tracked time by tag. Provides fle
 - `CONCAT` - Combine all tags on an interval into a single key
 - `SPLIT` - Divide time equally among tags on an interval
 
-Usage: `timew report myday.py [timespan]`
+Usage: `timew report summarize.py [timespan]`
 
 ### timew-change-tag
 
