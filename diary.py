@@ -57,9 +57,9 @@ def get_option(name, args, configuration):
         arg_value = getattr(args, 'tags', None)
     elif name == 'PRETTY_ALIAS':
         arg_value = getattr(args, 'aliases', None)
-        # aliases is a list from argparse, join for consistent string format
+        # aliases is a list from argparse, convert to JSON
         if arg_value:
-            return ','.join(arg_value)
+            return json.dumps(arg_value)
     else:
         arg_value = getattr(args, name.lower(), None)
 
@@ -83,8 +83,8 @@ def reexec_via_timew(args):
     if args.tags:
         env['TAGS_WANTED'] = args.tags
     if args.aliases:
-        # Join multiple aliases with comma (aliases can contain : but not ,)
-        env['PRETTY_ALIAS'] = ','.join(args.aliases)
+        # Pass as JSON to support any characters in aliases
+        env['PRETTY_ALIAS'] = json.dumps(args.aliases)
 
     # Build timew command
     script_name = os.path.basename(sys.argv[0])
@@ -107,13 +107,14 @@ def format_seconds(seconds):
 def parse_aliases(alias_str):
     """Parse alias string into a dict mapping tag -> display name.
 
-    Format: "tag1:Alias 1,tag2:Alias 2"
+    Format: JSON array of "tag:alias" strings, e.g. ["tag1:Alias 1", "tag2:Alias, two"]
     Split on first : so aliases can contain colons.
     """
     aliases = {}
     if not alias_str:
         return aliases
-    for pair in alias_str.split(','):
+    pairs = json.loads(alias_str)
+    for pair in pairs:
         if ':' in pair:
             tag, alias = pair.split(':', 1)
             aliases[tag.strip()] = alias.strip()
@@ -257,7 +258,7 @@ def calculate_totals(input_stream, args):
 
     # Compose table rows.
     grand_total = 0
-    for tag in sorted(totals):
+    for tag in sorted(totals, key=lambda x: (int(x=="UNACCOUNTED")<<30)-totals[x].total_seconds()):
         seconds = int(totals[tag].total_seconds())
         formatted = format_seconds(seconds)
         grand_total += seconds
