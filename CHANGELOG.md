@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `timew-change-tag`: Support for removing tags (empty replacement)
 
 ### Changed
+- Renamed `myday.py` to `summarize.py` for clarity
 - `timew-change-tag`: Rewritten from bash to Python with argparse
 - `timew-change-tag`: Now uses `timew export` JSON instead of parsing summary output
 - `timew-short.sh`: Handle css_class removal in 'start' mode
