@@ -44,6 +44,7 @@ A timewarrior report extension for diary-style time summaries. Shows time spent 
 | Option | Env Var | Description |
 |--------|---------|-------------|
 | `--tags`, `--tags-wanted` | `TAGS_WANTED` | Tags to track (comma-separated), others shown as UNACCOUNTED |
+| `--pretty-alias` | `PRETTY_ALIAS` | Map tag to display name (repeatable, format: `tag:Alias`) |
 
 **Usage:**
 
@@ -53,6 +54,11 @@ TAGS_WANTED="work,personal,exercise" timew report diary.py :yesterday
 
 # Direct invocation (auto re-execs via timew report)
 ./diary.py --tags="work,personal,exercise" :yesterday
+
+# With pretty aliases
+./diary.py --tags="4me-personal-admin,4WORK" \
+  --pretty-alias="4me-personal-admin:Personal admin" \
+  --pretty-alias="4WORK:Work" :yesterday
 ```
 
 ### timew-change-tag

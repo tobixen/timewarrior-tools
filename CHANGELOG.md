@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `diary.py`: New report extension for diary-style time summaries
   - Shows time spent on specified tags, unmatched time as UNACCOUNTED
   - `--tags`/`--tags-wanted` options (comma-separated tag list)
+  - `--pretty-alias` option to map tags to display names (can be repeated)
   - Direct invocation support with auto re-exec via `timew report`
 
 ### Changed
