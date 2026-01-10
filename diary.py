@@ -143,16 +143,22 @@ def calculate_totals(input_stream, args):
         else:
             body += line
 
-    # Get tags option
-    tags_str = get_option('TAGS_WANTED', args, configuration)
-    if not tags_str:
-        return ["Error: TAGS_WANTED not specified. Use --tags or TAGS_WANTED env var."]
-
-    TAGS_WANTED = {t.strip() for t in tags_str.split(",")}
-
     # Get pretty aliases
     alias_str = get_option('PRETTY_ALIAS', args, configuration)
     aliases = parse_aliases(alias_str)
+
+    # Get tags option - tags with aliases are automatically wanted
+    tags_str = get_option('TAGS_WANTED', args, configuration)
+    if tags_str:
+        TAGS_WANTED = {t.strip() for t in tags_str.split(",")}
+    else:
+        TAGS_WANTED = set()
+
+    # Add aliased tags to wanted tags
+    TAGS_WANTED.update(aliases.keys())
+
+    if not TAGS_WANTED:
+        return ["Error: No tags specified. Use --tags or --pretty-alias."]
 
     j = json.loads(body)
 
