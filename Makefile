@@ -6,7 +6,7 @@ EXTDIR ?= $(HOME)/.config/timewarrior/extensions
 
 # Files to install
 EXTENSIONS = summarize.py
-BINARIES = timew-change-tag timew-short.sh timew-start-afk
+BINARIES = timew-change-tag timew-short.sh timew-start-afk summarize.py
 
 .PHONY: all install install-dev uninstall help
 

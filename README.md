@@ -6,16 +6,30 @@ Various scripts and tools for use with [Timewarrior](https://timewarrior.net/).
 
 ### summarize.py
 
-A timewarrior report extension that summarizes tracked time by tag. Provides flexible filtering and grouping options via environment variables:
+A timewarrior report extension that summarizes tracked time by tag.
 
-- `REGEX` - Only include tags matching this regex
-- `NEGREGEX` - Exclude tags matching this regex
-- `KILLTAGS` - Skip intervals containing these tags (space-separated)
-- `IGNORETAGS` - Remove these tags from output (space-separated)
-- `CONCAT` - Combine all tags on an interval into a single key
-- `SPLIT` - Divide time equally among tags on an interval
+**Options** (via command-line or environment variables):
 
-Usage: `timew report summarize.py [timespan]`
+| Option | Env Var | Description |
+|--------|---------|-------------|
+| `--regex` | `REGEX` | Only include tags matching this regex |
+| `--negregex` | `NEGREGEX` | Exclude tags matching this regex |
+| `--killtags` | `KILLTAGS` | Skip intervals containing these tags (space-separated) |
+| `--ignoretags` | `IGNORETAGS` | Remove these tags from output (space-separated) |
+| `--concat` | `CONCAT` | Combine all tags on an interval into a single key |
+| `--split` | `SPLIT` | Divide time equally among tags on an interval |
+
+**Usage:**
+
+```bash
+# Via timew report (traditional)
+timew report summarize.py :yesterday
+REGEX="^4" timew report summarize.py :week
+
+# Direct invocation (auto re-execs via timew report)
+summarize.py --regex="^4" --concat :yesterday
+summarize.py --killtags="afk break" :week
+```
 
 ### timew-change-tag
 

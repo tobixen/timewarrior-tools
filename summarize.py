@@ -1,19 +1,112 @@
 #!/usr/bin/env python3
+"""Timewarrior report extension that summarizes tracked time by tag.
 
+Can be called in two ways:
+
+1. Via timew report (traditional):
+   REGEX="^4" timew report summarize.py :yesterday
+
+2. Directly with options (will re-exec via timew report):
+   ./summarize.py --regex="^4" :yesterday
+"""
+
+import argparse
 import datetime
 import json
-import sys
 import os
 import re
+import subprocess
+import sys
 
-from dateutil import tz
 from collections import defaultdict
+from dateutil import tz
 
 DATEFORMAT = "%Y%m%dT%H%M%SZ"
 
+# Options that can be set via environment variables or command-line
+OPTIONS = ['REGEX', 'NEGREGEX', 'KILLTAGS', 'IGNORETAGS', 'CONCAT', 'SPLIT']
+
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Summarize timewarrior data by tag",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  timew report summarize.py :yesterday
+  REGEX="^4" timew report summarize.py :week
+  ./summarize.py --regex="^4" --concat :yesterday
+  ./summarize.py --killtags="afk break" :week
+        """
+    )
+    parser.add_argument('--regex', metavar='PATTERN',
+                        help='Only include tags matching this regex')
+    parser.add_argument('--negregex', metavar='PATTERN',
+                        help='Exclude tags matching this regex')
+    parser.add_argument('--killtags', metavar='TAGS',
+                        help='Skip intervals containing these tags (space-separated)')
+    parser.add_argument('--ignoretags', metavar='TAGS',
+                        help='Remove these tags from output (space-separated)')
+    parser.add_argument('--concat', action='store_true',
+                        help='Combine all tags on an interval into a single key')
+    parser.add_argument('--split', action='store_true',
+                        help='Divide time equally among tags on an interval')
+    parser.add_argument('timew_args', nargs='*', metavar='ARG',
+                        help='Arguments to pass to timew (tags, date ranges, etc.)')
+
+    return parser.parse_args()
+
+
+def get_option(name, args, configuration):
+    """Get option value from args, environment, or configuration header.
+
+    Priority: command-line args > environment variables > config header
+    """
+    # Check command-line args
+    arg_value = getattr(args, name.lower(), None)
+    if arg_value is not None:
+        if isinstance(arg_value, bool):
+            return '1' if arg_value else None
+        return arg_value
+
+    # Check environment
+    env_value = os.environ.get(name)
+    if env_value is not None:
+        return env_value
+
+    # Check configuration header (from timew)
+    return configuration.get(name)
+
+
+def reexec_via_timew(args):
+    """Re-execute this script via 'timew report' with options as env vars."""
+    env = os.environ.copy()
+
+    # Convert options to environment variables
+    if args.regex:
+        env['REGEX'] = args.regex
+    if args.negregex:
+        env['NEGREGEX'] = args.negregex
+    if args.killtags:
+        env['KILLTAGS'] = args.killtags
+    if args.ignoretags:
+        env['IGNORETAGS'] = args.ignoretags
+    if args.concat:
+        env['CONCAT'] = '1'
+    if args.split:
+        env['SPLIT'] = '1'
+
+    # Build timew command
+    script_name = os.path.basename(sys.argv[0])
+    cmd = ['timew', 'report', script_name] + args.timew_args
+
+    # Execute and replace this process
+    os.execvpe(cmd[0], cmd, env)
+
 
 def format_seconds(seconds):
-    """Convert seconds to a formatted string
+    """Convert seconds to a formatted string.
 
     Convert seconds: 3661
     To formatted: "   1:01:01"
@@ -23,35 +116,37 @@ def format_seconds(seconds):
     seconds = seconds % 60
     return "{:4d}:{:02d}:{:02d}".format(hours, minutes, seconds)
 
-def calculate_totals(input_stream):
+
+def calculate_totals(input_stream, args):
+    """Calculate totals from timewarrior input."""
     from_zone = tz.tzutc()
     to_zone = tz.tzlocal()
 
-    # Environment
-    REGEX = os.environ.get('REGEX')
-    NEGREGEX = os.environ.get('NEGREGEX')
-    KILLTAGS = os.environ.get('KILLTAGS')
-    IGNORETAGS = os.environ.get('IGNORETAGS')
-    CONCAT = os.environ.get('CONCAT')
-    SPLIT = os.environ.get('SPLIT')
-
-    # Extract the configuration settings.
-    header = 1
-    configuration = dict()
+    # Extract the configuration settings from header
+    header = True
+    configuration = {}
     body = ""
 
     for line in input_stream:
         if header:
             if line == "\n":
-                header = 0
+                header = False
             else:
-                fields = line.strip().split(": ", 2)
+                fields = line.strip().split(": ", 1)
                 if len(fields) == 2:
                     configuration[fields[0]] = fields[1]
                 else:
                     configuration[fields[0]] = ""
         else:
             body += line
+
+    # Get options (args > env > config)
+    REGEX = get_option('REGEX', args, configuration)
+    NEGREGEX = get_option('NEGREGEX', args, configuration)
+    KILLTAGS = get_option('KILLTAGS', args, configuration)
+    IGNORETAGS = get_option('IGNORETAGS', args, configuration)
+    CONCAT = get_option('CONCAT', args, configuration)
+    SPLIT = get_option('SPLIT', args, configuration)
 
     j = json.loads(body)
 
@@ -107,42 +202,42 @@ def calculate_totals(input_stream):
     totals = defaultdict(datetime.timedelta)
     untagged = None
 
-    for object in j:
-        start = datetime.datetime.strptime(object["start"], DATEFORMAT).replace(tzinfo=from_zone)
-        end = datetime.datetime.strptime(object["end"], DATEFORMAT).replace(tzinfo=from_zone)
+    for obj in j:
+        start = datetime.datetime.strptime(obj["start"], DATEFORMAT).replace(tzinfo=from_zone)
+        end = datetime.datetime.strptime(obj["end"], DATEFORMAT).replace(tzinfo=from_zone)
 
         tracked = end - start
 
         if NEGREGEX:
-            if any(re.search(NEGREGEX, tag) for tag in object["tags"]):
+            if any(re.search(NEGREGEX, tag) for tag in obj["tags"]):
                 continue
 
         if REGEX:
-            if not any(re.search(REGEX, tag) for tag in object["tags"]):
+            if not any(re.search(REGEX, tag) for tag in obj["tags"]):
                 continue
-            
+
         if KILLTAGS:
-            if set(KILLTAGS.split(" ")).intersection(set(object["tags"])):
+            if set(KILLTAGS.split(" ")).intersection(set(obj["tags"])):
                 continue
 
         if IGNORETAGS:
             for tag in IGNORETAGS.split(" "):
-                if tag in object["tags"]:
-                    object["tags"].remove(tag)
-                
-        if "tags" not in object or object["tags"] == []:
+                if tag in obj["tags"]:
+                    obj["tags"].remove(tag)
+
+        if "tags" not in obj or obj["tags"] == []:
             if untagged:
                 untagged += tracked
             else:
                 untagged = tracked
         else:
             if CONCAT:
-                object["tags"].sort()
-                totals[",".join(object["tags"])] += tracked
+                obj["tags"].sort()
+                totals[",".join(obj["tags"])] += tracked
             else:
                 if SPLIT:
-                    tracked /= len(object["tags"])
-                for tag in object["tags"]:
+                    tracked /= len(obj["tags"])
+                for tag in obj["tags"]:
                     if REGEX and not re.search(REGEX, tag):
                         continue
                     if NEGREGEX and re.search(NEGREGEX, tag):
@@ -163,8 +258,8 @@ def calculate_totals(input_stream):
     ]
 
     # Compose table header.
-    if configuration["color"] == "on":
-        output.append("[4m{:{width}}[0m [4m{:>10}[0m".format("Tag", "Total", width=max_width))
+    if configuration.get("color") == "on":
+        output.append("[4m{:{width}}[0m [4m{:>10}[0m".format("Tag", "Total", width=max_width))
     else:
         output.append("{:{width}} {:>10}".format("Tag", "Total", width=max_width))
         output.append("{} {}".format("-" * max_width, "----------"))
@@ -184,8 +279,8 @@ def calculate_totals(input_stream):
         output.append("{:{width}} {:10}".format("", formatted, width=max_width))
 
     # Compose total.
-    if configuration["color"] == "on":
-        output.append("{} {}".format(" " * max_width, "[4m          [0m"))
+    if configuration.get("color") == "on":
+        output.append("{} {}".format(" " * max_width, "[4m          [0m"))
     else:
         output.append("{} {}".format(" " * max_width, "----------"))
 
@@ -195,6 +290,19 @@ def calculate_totals(input_stream):
     return output
 
 
-if __name__ == "__main__":
-    for line in calculate_totals(sys.stdin):
+def main():
+    args = parse_args()
+
+    # If stdin is a terminal, we're being called directly (not via timew report)
+    # Re-exec via timew report with options converted to environment variables
+    if sys.stdin.isatty():
+        reexec_via_timew(args)
+        # reexec_via_timew calls os.execvpe, so we never reach here
+
+    # Called via timew report - process the input
+    for line in calculate_totals(sys.stdin, args):
         print(line)
+
+
+if __name__ == "__main__":
+    main()

@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `summarize.py`: Command-line options (`--regex`, `--negregex`, `--killtags`, `--ignoretags`, `--concat`, `--split`)
+- `summarize.py`: Direct invocation support - auto re-execs via `timew report` when called from terminal
+- `summarize.py`: Configuration header parsing as fallback for options
+
+### Changed
+- `summarize.py`: Refactored to use argparse for argument handling
+
 ## [0.2.0] - 2026-01-10
 
 ### Added
