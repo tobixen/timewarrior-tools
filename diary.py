@@ -39,6 +39,8 @@ Examples:
     )
     parser.add_argument('--tags', '--tags-wanted', metavar='TAGS', dest='tags',
                         help='Tags to track (comma-separated), others shown as UNACCOUNTED')
+    parser.add_argument('--pretty-alias', metavar='TAG:ALIAS', action='append', dest='aliases',
+                        help='Display alias for a tag (can be repeated)')
     parser.add_argument('timew_args', nargs='*', metavar='ARG',
                         help='Arguments to pass to timew (tags, date ranges, etc.)')
 
@@ -50,9 +52,14 @@ def get_option(name, args, configuration):
 
     Priority: command-line args > environment variables > config header
     """
-    # Check command-line args (map TAGS_WANTED to --tags)
+    # Check command-line args (map option names to arg names)
     if name == 'TAGS_WANTED':
         arg_value = getattr(args, 'tags', None)
+    elif name == 'PRETTY_ALIAS':
+        arg_value = getattr(args, 'aliases', None)
+        # aliases is a list from argparse, join for consistent string format
+        if arg_value:
+            return ','.join(arg_value)
     else:
         arg_value = getattr(args, name.lower(), None)
 
@@ -75,6 +82,9 @@ def reexec_via_timew(args):
     # Convert options to environment variables
     if args.tags:
         env['TAGS_WANTED'] = args.tags
+    if args.aliases:
+        # Join multiple aliases with comma (aliases can contain : but not ,)
+        env['PRETTY_ALIAS'] = ','.join(args.aliases)
 
     # Build timew command
     script_name = os.path.basename(sys.argv[0])
@@ -92,6 +102,22 @@ def format_seconds(seconds):
     """
     hours = seconds / 3600
     return "{:9.1f}h".format(hours)
+
+
+def parse_aliases(alias_str):
+    """Parse alias string into a dict mapping tag -> display name.
+
+    Format: "tag1:Alias 1,tag2:Alias 2"
+    Split on first : so aliases can contain colons.
+    """
+    aliases = {}
+    if not alias_str:
+        return aliases
+    for pair in alias_str.split(','):
+        if ':' in pair:
+            tag, alias = pair.split(':', 1)
+            aliases[tag.strip()] = alias.strip()
+    return aliases
 
 
 def calculate_totals(input_stream, args):
@@ -123,6 +149,10 @@ def calculate_totals(input_stream, args):
         return ["Error: TAGS_WANTED not specified. Use --tags or TAGS_WANTED env var."]
 
     TAGS_WANTED = {t.strip() for t in tags_str.split(",")}
+
+    # Get pretty aliases
+    alias_str = get_option('PRETTY_ALIAS', args, configuration)
+    aliases = parse_aliases(alias_str)
 
     j = json.loads(body)
 
@@ -198,11 +228,12 @@ def calculate_totals(input_stream, args):
         for tag in obj["tags"]:
             totals[tag] += tracked
 
-    # Determine largest tag width.
+    # Determine largest tag width (using aliases where available).
     max_width = len("Total")
     for tag in totals:
-        if len(tag) > max_width:
-            max_width = len(tag)
+        display_name = aliases.get(tag, tag)
+        if len(display_name) > max_width:
+            max_width = len(display_name)
 
     # Compose report header.
     output = [
@@ -224,7 +255,8 @@ def calculate_totals(input_stream, args):
         seconds = int(totals[tag].total_seconds())
         formatted = format_seconds(seconds)
         grand_total += seconds
-        output.append("* {:{width}}   - {:10}".format(tag, formatted, width=max_width))
+        display_name = aliases.get(tag, tag)
+        output.append("* {:{width}}   - {:10}".format(display_name, formatted, width=max_width))
 
     # Compose total.
     if configuration.get("color") == "on":
