@@ -1,13 +1,189 @@
-#!/bin/bash
-fromtag="$1"
-totag="$2"
-timespan="$3"
-[ -z "$timespan" ] && timespan=":year"
-ids=$(timew summary $timespan :id | grep -E " $fromtag[, ]" | perl -ne '/\s*(@\d+) / && print "$1 "')
-if [ -n "$ids" ]
-then
-	echo timew untag $ids $fromtag
-	timew untag $ids $fromtag
-	echo timew tag $ids $totag
-	timew tag $ids $totag
-fi
+#!/usr/bin/env python3
+"""Change tags in timewarrior intervals.
+
+Can replace single tags or transform combinations of tags.
+
+Examples:
+    # Simple: change 'oldtag' to 'newtag'
+    timew-change-tag oldtag newtag
+
+    # With timespan
+    timew-change-tag oldtag newtag --from 2026-01-01
+
+    # Transform tag combination: intervals with 'transport' AND '~aw' -> '4ME,transport'
+    timew-change-tag 'transport,~aw' '4ME,transport'
+
+    # Dry run - show what would change
+    timew-change-tag oldtag newtag --dry-run
+
+    # Remove a tag (empty replacement)
+    timew-change-tag unwanted-tag ''
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime
+
+
+def parse_tags(tag_string: str) -> set[str]:
+    """Parse comma-separated tags into a set."""
+    if not tag_string:
+        return set()
+    return {t.strip() for t in tag_string.split(",") if t.strip()}
+
+
+def get_intervals(timespan: str | None = None) -> list[dict]:
+    """Get intervals from timew export."""
+    cmd = ["timew", "export"]
+    if timespan:
+        cmd.extend(timespan.split())
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"Error running timew export: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    return json.loads(result.stdout) if result.stdout.strip() else []
+
+
+def find_matching_intervals(intervals: list[dict], match_tags: set[str]) -> list[dict]:
+    """Find intervals that contain ALL the match_tags."""
+    matching = []
+    for interval in intervals:
+        interval_tags = set(interval.get("tags", []))
+        if match_tags.issubset(interval_tags):
+            matching.append(interval)
+    return matching
+
+
+def change_tags(interval_id: int, remove_tags: set[str], add_tags: set[str], dry_run: bool) -> bool:
+    """Change tags on an interval. Returns True if successful."""
+    id_str = f"@{interval_id}"
+
+    # Remove old tags
+    if remove_tags:
+        cmd = ["timew", "untag", id_str] + list(remove_tags)
+        if dry_run:
+            print(f"  Would run: {' '.join(cmd)}")
+        else:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  Error untag: {result.stderr}", file=sys.stderr)
+                return False
+
+    # Add new tags
+    if add_tags:
+        cmd = ["timew", "tag", id_str] + list(add_tags)
+        if dry_run:
+            print(f"  Would run: {' '.join(cmd)}")
+        else:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  Error tag: {result.stderr}", file=sys.stderr)
+                return False
+
+    return True
+
+
+def format_interval(interval: dict) -> str:
+    """Format interval for display."""
+    start = interval.get("start", "?")
+    if isinstance(start, str) and len(start) > 19:
+        start = start[:19]  # Trim timezone for display
+    tags = ", ".join(sorted(interval.get("tags", [])))
+    return f"{start} [{tags}]"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Change tags in timewarrior intervals",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s oldtag newtag                    # Simple tag rename
+  %(prog)s oldtag newtag --from 2026-01-01  # With timespan
+  %(prog)s 'a,b' 'x,y'                      # Transform: a+b -> x+y
+  %(prog)s oldtag ''                        # Remove a tag
+  %(prog)s oldtag newtag --dry-run          # Preview changes
+        """
+    )
+    parser.add_argument("from_tags", help="Tag(s) to match/remove (comma-separated)")
+    parser.add_argument("to_tags", help="Tag(s) to add (comma-separated, or empty string to just remove)")
+    parser.add_argument("--from", dest="from_date", help="Start date for timespan")
+    parser.add_argument("--to", dest="to_date", help="End date for timespan")
+    parser.add_argument("-n", "--dry-run", action="store_true", help="Show what would be done without making changes")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show each interval being changed")
+
+    args = parser.parse_args()
+
+    # Parse tags
+    match_tags = parse_tags(args.from_tags)
+    new_tags = parse_tags(args.to_tags)
+
+    if not match_tags:
+        print("Error: must specify at least one tag to match", file=sys.stderr)
+        sys.exit(1)
+
+    # Build timespan
+    timespan = None
+    if args.from_date or args.to_date:
+        parts = []
+        if args.from_date:
+            parts.append(args.from_date)
+        else:
+            parts.append("2020-01-01")
+        parts.append("-")
+        if args.to_date:
+            parts.append(args.to_date)
+        else:
+            parts.append("tomorrow")
+        timespan = " ".join(parts)
+
+    # Get intervals
+    intervals = get_intervals(timespan)
+    matching = find_matching_intervals(intervals, match_tags)
+
+    if not matching:
+        print(f"No intervals found with tags: {', '.join(sorted(match_tags))}")
+        sys.exit(0)
+
+    # Calculate what tags to add/remove
+    # Remove: tags that are in match_tags but not in new_tags
+    # Add: tags that are in new_tags but not in match_tags
+    tags_to_remove = match_tags - new_tags
+    tags_to_add = new_tags - match_tags
+
+    print(f"Found {len(matching)} intervals with tags: {', '.join(sorted(match_tags))}")
+    if tags_to_remove:
+        print(f"Will remove: {', '.join(sorted(tags_to_remove))}")
+    if tags_to_add:
+        print(f"Will add: {', '.join(sorted(tags_to_add))}")
+    if args.dry_run:
+        print("(Dry run - no changes will be made)")
+    print()
+
+    # Process intervals
+    success_count = 0
+    for interval in matching:
+        interval_id = interval.get("id")
+        if interval_id is None:
+            print(f"Warning: interval has no ID: {format_interval(interval)}", file=sys.stderr)
+            continue
+
+        if args.verbose or args.dry_run:
+            print(f"@{interval_id}: {format_interval(interval)}")
+
+        if change_tags(interval_id, tags_to_remove, tags_to_add, args.dry_run):
+            success_count += 1
+
+    print()
+    if args.dry_run:
+        print(f"Would change {success_count} intervals")
+    else:
+        print(f"Changed {success_count} intervals")
+
+
+if __name__ == "__main__":
+    main()
