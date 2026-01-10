@@ -269,7 +269,7 @@ def calculate_totals(input_stream, args):
 
     # Compose table header.
     if configuration.get("color") == "on":
-        output.append("[4m{:{width}}[0m [4m{:>10}[0m".format("Tag", "Total", width=max_width))
+        output.append("\033[4m{:{width}}\033[0m \033[4m{:>10}\033[0m".format("Tag", "Total", width=max_width))
     else:
         output.append("{:{width}} {:>10}".format("Tag", "Total", width=max_width))
         output.append("{} {}".format("-" * max_width, "----------"))
@@ -290,7 +290,7 @@ def calculate_totals(input_stream, args):
 
     # Compose total.
     if configuration.get("color") == "on":
-        output.append("{} {}".format(" " * max_width, "[4m          [0m"))
+        output.append("{} {}".format(" " * max_width, "\033[4m          \033[0m"))
     else:
         output.append("{} {}".format(" " * max_width, "----------"))
 
