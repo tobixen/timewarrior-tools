@@ -35,6 +35,26 @@ summarize.py --regex="^4" --concat :yesterday
 summarize.py --killtags="afk,break" :week
 ```
 
+### diary.py
+
+A timewarrior report extension for diary-style time summaries. Shows time spent on specified tags, with unmatched time shown as UNACCOUNTED.
+
+**Options** (via command-line or environment variables):
+
+| Option | Env Var | Description |
+|--------|---------|-------------|
+| `--tags`, `--tags-wanted` | `TAGS_WANTED` | Tags to track (comma-separated), others shown as UNACCOUNTED |
+
+**Usage:**
+
+```bash
+# Via timew report (traditional)
+TAGS_WANTED="work,personal,exercise" timew report diary.py :yesterday
+
+# Direct invocation (auto re-execs via timew report)
+./diary.py --tags="work,personal,exercise" :yesterday
+```
+
 ### timew-change-tag
 
 Change or rename tags across timewarrior intervals. Supports:
@@ -73,7 +93,7 @@ make uninstall
 ```
 
 This installs:
-- `summarize.py` to `~/.config/timewarrior/extensions/`
+- `summarize.py`, `diary.py` to `~/.config/timewarrior/extensions/`
 - `timew-change-tag`, `timew-short.sh`, `timew-start-afk` to `~/.local/bin/`
 
 ## Related
