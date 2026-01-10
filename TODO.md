@@ -6,17 +6,44 @@
 - [x] Make a CHANGELOG according to the KeepAChangelog standard
 - [x] Brush up the README
 - [x] Rename myday.py to summarize.py
+- [x] Investigate plugin parameter passing (see findings below)
+- [x] Create a Makefile for installation
 
-## Pending
+## Investigation Findings: Plugin Parameter Passing
 
-### Investigate plugin parameter passing
+### How timewarrior passes data to report plugins
 
-summarize.py takes parameters as environment variables rather than --long-options.
+Extensions receive all data via **stdin only** - no command line arguments are passed.
 
-- [ ] The script is intended to be invoked as a plugin via the `timew report` command, and I believe this is the easiest way to pass options to the script - is that correct? It should be investigated. The timewarrior source is available under ~/timewarrior
-- [ ] I think the timew command does not take any --long-options (or short options), they have `:hints` instead. Based on this, it should be relatively trivial to pass all options starting with `-` to the report plugin and process everything not starting with `-` (and everything after `--`) by timew. Check the GitHub issues and pull requests if anyone has thought about this or similar ideas earlier.
-- [ ] Check the contribution guidelines. If it's trivial to add support for this, then we should do it through a pull request, if not, we'll add a wrapper script for running the summarize report.
+Input format:
+1. Configuration header: All config values as `key: value` lines
+2. Blank line separator
+3. JSON data: Array of interval objects
 
-### Installation
+Source: `~/timewarrior/src/commands/CmdReport.cpp` and `~/timewarrior/src/Extensions.cpp`
 
-- [ ] The plugin should be in ~/.config/timewarrior/extensions/ - create a Makefile that can install the file there. For me a symlink would be more appropriate than copy, so make a special development target for installing the symlink.
+### GitHub Issue #230 - "Allow extensions to take extra options"
+
+This is an **open enhancement request since 2019**. The maintainer acknowledges it would be useful but has concerns about argument disambiguation.
+
+**Current workaround**: Use `rc.key=value` on the command line:
+```bash
+timew report summarize.py rc.REGEX="^4" rc.CONCAT=1 :yesterday
+```
+These appear in the config header and can be read by the extension.
+
+### Conclusion
+
+Environment variables work fine for now. The `rc.key=value` workaround is the "official" approach.
+
+Options for improvement:
+1. **Modify summarize.py** to also read from config header (in addition to env vars)
+2. **Create a wrapper script** that parses `--options` and converts to `rc.key=value`
+3. **Contribute to timewarrior** - Implement issue #230 (significant effort)
+
+For now, the current environment variable approach is acceptable. A wrapper script like `~/bin/myday.sh` handles the complexity of setting the right variables.
+
+## Future Ideas
+
+- [ ] Consider adding config header parsing to summarize.py as fallback
+- [ ] Consider contributing a documentation improvement to timewarrior about the `rc.` workaround

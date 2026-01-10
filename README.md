@@ -41,6 +41,23 @@ Supports `~css_class:X` tags for styling in status bars.
 
 Simple script to start tracking AFK time if not already tracking it.
 
+## Installation
+
+```bash
+# Install (copies files)
+make install
+
+# For development (creates symlinks)
+make install-dev
+
+# Uninstall
+make uninstall
+```
+
+This installs:
+- `summarize.py` to `~/.config/timewarrior/extensions/`
+- `timew-change-tag`, `timew-short.sh`, `timew-start-afk` to `~/.local/bin/`
+
 ## Related
 
 - [aw-export-timewarrior](https://github.com/tobixen/aw-export-timewarrior) - Export data from ActivityWatch to Timewarrior
