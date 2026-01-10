@@ -2,6 +2,10 @@
 
 Various scripts and tools for use with [Timewarrior](https://timewarrior.net/).
 
+**In the 0.x release series I can and I will change the behaviour of some of the scripts**.  The options for `summarize` has not been very well tought through, they have just been added "organically" to support my work flow.  I have on my list to refactor this.
+
+Arguably some of the functionality here should be introduced in the core TimeWarrior code.  I'm intending to spend some time looking through the issue tracker and see if it makes sense to make any pull requests.
+
 ## Scripts
 
 ### summarize.py
