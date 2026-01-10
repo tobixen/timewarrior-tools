@@ -76,9 +76,13 @@ def get_option(name, args, configuration):
     # Check command-line args
     arg_value = getattr(args, name.lower(), None)
     if arg_value is not None:
+        # For boolean args, only consider it "set" if True
+        # (False is the default, so fall through to env/config)
         if isinstance(arg_value, bool):
-            return '1' if arg_value else None
-        return arg_value
+            if arg_value:
+                return '1'
+        else:
+            return arg_value
 
     # Check environment
     env_value = os.environ.get(name)
