@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Timewarrior report extension that summarizes tracked time by tag.
 
+Based on the bundled totals.py, with additional filtering features that
+address several open timewarrior enhancement requests:
+
+- Tag exclusion (--negregex, --killtags): https://github.com/GothenburgBitFactory/timewarrior/issues/209
+- Pattern matching (--regex): https://github.com/GothenburgBitFactory/timewarrior/issues/339
+- OR'd tag filtering: https://github.com/GothenburgBitFactory/timewarrior/issues/64
+
 Can be called in two ways:
 
 1. Via timew report (traditional):
@@ -8,6 +15,9 @@ Can be called in two ways:
 
 2. Directly with options (will re-exec via timew report):
    ./summarize.py --regex="^4" :yesterday
+
+See also: https://github.com/GothenburgBitFactory/timewarrior/issues/230
+for the proposal to add native option passing to extensions.
 """
 
 import argparse
