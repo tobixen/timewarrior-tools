@@ -32,18 +32,21 @@ timew report summarize.py rc.REGEX="^4" rc.CONCAT=1 :yesterday
 ```
 These appear in the config header and can be read by the extension.
 
-### Conclusion
+### Solution Implemented
 
-Environment variables work fine for now. The `rc.key=value` workaround is the "official" approach.
+summarize.py now supports both approaches:
 
-Options for improvement:
-1. **Modify summarize.py** to also read from config header (in addition to env vars)
-2. **Create a wrapper script** that parses `--options` and converts to `rc.key=value`
-3. **Contribute to timewarrior** - Implement issue #230 (significant effort)
+1. **Command-line options**: `--regex`, `--negregex`, `--killtags`, `--ignoretags`, `--concat`, `--split`
+2. **Direct invocation**: When called from a terminal, it detects missing stdin and re-execs via `timew report`
+3. **Config header parsing**: Falls back to reading options from the timew config header
 
-For now, the current environment variable approach is acceptable. A wrapper script like `~/bin/myday.sh` handles the complexity of setting the right variables.
+Priority: command-line args > environment variables > config header
+
+Example usage:
+```bash
+summarize.py --regex="^4" --concat :yesterday
+```
 
 ## Future Ideas
 
-- [ ] Consider adding config header parsing to summarize.py as fallback
 - [ ] Consider contributing a documentation improvement to timewarrior about the `rc.` workaround
