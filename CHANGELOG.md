@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-01-10
+
+### Added
+- Makefile with `install`, `install-dev` (symlinks), and `uninstall` targets
+- Installation documentation in README
+
+### Documentation
+- Investigated timewarrior plugin parameter passing (see TODO.md)
+- Documented that environment variables and `rc.key=value` are the supported approaches
+
 ## [0.1.0] - 2026-01-10
 
 ### Added
