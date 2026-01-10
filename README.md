@@ -16,6 +16,7 @@ A timewarrior report extension that summarizes tracked time by tag.
 
 | Option | Env Var | Description |
 |--------|---------|-------------|
+| `--tags` | `TAGS` | Only include these tags (comma-separated, OR logic) |
 | `--regex` | `REGEX` | Only include tags matching this regex |
 | `--negregex` | `NEGREGEX` | Exclude tags matching this regex |
 | `--killtags` | `KILLTAGS` | Skip intervals containing these tags (comma-separated) |

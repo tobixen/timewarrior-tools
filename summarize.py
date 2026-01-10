@@ -34,7 +34,7 @@ from dateutil import tz
 DATEFORMAT = "%Y%m%dT%H%M%SZ"
 
 # Options that can be set via environment variables or command-line
-OPTIONS = ['REGEX', 'NEGREGEX', 'KILLTAGS', 'IGNORETAGS', 'CONCAT', 'SPLIT']
+OPTIONS = ['TAGS', 'REGEX', 'NEGREGEX', 'KILLTAGS', 'IGNORETAGS', 'CONCAT', 'SPLIT']
 
 
 def parse_args():
@@ -50,6 +50,8 @@ Examples:
   ./summarize.py --killtags="afk,break" :week
         """
     )
+    parser.add_argument('--tags', metavar='TAGS',
+                        help='Only include these tags (comma-separated, OR logic)')
     parser.add_argument('--regex', metavar='PATTERN',
                         help='Only include tags matching this regex')
     parser.add_argument('--negregex', metavar='PATTERN',
@@ -98,6 +100,8 @@ def reexec_via_timew(args):
     env = os.environ.copy()
 
     # Convert options to environment variables
+    if args.tags:
+        env['TAGS'] = args.tags
     if args.regex:
         env['REGEX'] = args.regex
     if args.negregex:
@@ -155,12 +159,16 @@ def calculate_totals(input_stream, args):
             body += line
 
     # Get options (args > env > config)
+    TAGS = get_option('TAGS', args, configuration)
     REGEX = get_option('REGEX', args, configuration)
     NEGREGEX = get_option('NEGREGEX', args, configuration)
     KILLTAGS = get_option('KILLTAGS', args, configuration)
     IGNORETAGS = get_option('IGNORETAGS', args, configuration)
     CONCAT = get_option('CONCAT', args, configuration)
     SPLIT = get_option('SPLIT', args, configuration)
+
+    # Parse TAGS into a set for OR filtering
+    wanted_tags = {t.strip() for t in TAGS.split(",")} if TAGS else None
 
     j = json.loads(body)
 
@@ -230,6 +238,10 @@ def calculate_totals(input_stream, args):
             if not any(re.search(REGEX, tag) for tag in obj["tags"]):
                 continue
 
+        if wanted_tags:
+            if not wanted_tags.intersection(set(obj.get("tags", []))):
+                continue
+
         if KILLTAGS:
             killtags = {t.strip() for t in KILLTAGS.split(",")}
             if killtags.intersection(set(obj["tags"])):
@@ -256,6 +268,8 @@ def calculate_totals(input_stream, args):
                     if REGEX and not re.search(REGEX, tag):
                         continue
                     if NEGREGEX and re.search(NEGREGEX, tag):
+                        continue
+                    if wanted_tags and tag not in wanted_tags:
                         continue
                     totals[tag] += tracked
 
