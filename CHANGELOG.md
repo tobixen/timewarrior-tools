@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- `diary.py`: New report extension for diary-style time summaries
+  - Shows time spent on specified tags, unmatched time as UNACCOUNTED
+  - `--tags`/`--tags-wanted` options (comma-separated tag list)
+  - Direct invocation support with auto re-exec via `timew report`
+
+### Changed
+- `summarize.py`: Tags in `--killtags`, `--ignoretags` now comma-separated (breaking change)
+- `diary.py`: `TAGS_WANTED` env var now uses comma-separated format
+
 ## [0.3.1] - 2026-01-10
 
 ### Fixed
