@@ -1,0 +1,23 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [0.1.0] - 2026-01-10
+
+### Added
+- `timew-short.sh`: waybar output mode (`timew-short.sh waybar`) with JSON output
+- `timew-short.sh`: Support for `~css_class:X` tags for styling in waybar/swaybar
+- `timew-change-tag`: `--dry-run` option to preview changes
+- `timew-change-tag`: `--verbose` option for detailed output
+- `timew-change-tag`: Support for tag combinations (match intervals with multiple tags)
+- `timew-change-tag`: Support for removing tags (empty replacement)
+
+### Changed
+- `timew-change-tag`: Rewritten from bash to Python with argparse
+- `timew-change-tag`: Now uses `timew export` JSON instead of parsing summary output
+- `timew-short.sh`: Handle css_class removal in 'start' mode
+
+### Fixed
+- `timew-short.sh`: Fixed tag DOM references (`dom.active.tag` -> `dom.active.tags`)
