@@ -43,6 +43,7 @@ Examples:
 Diary update (requires diary-md package):
   ./diary.py --tags="work,personal" --update-diary :yesterday
   ./diary.py --tags="work" --update-diary --section=time --dry-run :yesterday
+  ./diary.py --tags="work" --update-diary --diary-file=~/my-diary.md :yesterday
   ./diary.py --tags="work" --update-diary --commit :yesterday
         """
     )
@@ -52,6 +53,8 @@ Diary update (requires diary-md package):
                         help='Display alias for a tag (can be repeated)')
     parser.add_argument('--update-diary', action='store_true', dest='update_diary',
                         help='Inject output into diary (requires diary-md package)')
+    parser.add_argument('--diary-file', metavar='PATH', dest='diary_file',
+                        help='Diary file path (default: ~/solveig/diary-{year}.md)')
     parser.add_argument('--section', '-s', default='timewarrior',
                         help='Diary section name (default: timewarrior)')
     parser.add_argument('--dry-run', '-n', action='store_true', dest='dry_run',
@@ -90,6 +93,10 @@ def get_option(name, args, configuration):
         # Boolean option - only return if explicitly True
         if getattr(args, 'update_diary', False):
             return True
+    elif name == 'DIARY_FILE':
+        arg_value = getattr(args, 'diary_file', None)
+        if arg_value is not None:
+            return arg_value
     elif name == 'DIARY_SECTION':
         arg_value = getattr(args, 'section', None)
         if arg_value is not None:
@@ -132,6 +139,8 @@ def reexec_via_timew(args):
         env['PRETTY_ALIAS'] = json.dumps(args.aliases)
     if args.update_diary:
         env['DIARY_UPDATE'] = '1'
+    if args.diary_file:
+        env['DIARY_FILE'] = args.diary_file
     if args.section:
         env['DIARY_SECTION'] = args.section
     if args.dry_run:
@@ -375,6 +384,8 @@ def get_diary_options(args, configuration):
     if isinstance(update_diary, str):
         update_diary = update_diary == '1'
 
+    diary_file = get_option('DIARY_FILE', args, configuration)
+
     section = get_option('DIARY_SECTION', args, configuration) or 'timewarrior'
 
     dry_run = get_option('DIARY_DRY_RUN', args, configuration)
@@ -391,6 +402,7 @@ def get_diary_options(args, configuration):
 
     return {
         'update_diary': update_diary,
+        'diary_file': diary_file,
         'section': section,
         'dry_run': dry_run,
         'commit': commit,
@@ -398,11 +410,22 @@ def get_diary_options(args, configuration):
     }
 
 
-def update_diary_with_lines(lines, target_date, section, dry_run=False, commit=False, push=False):
+def update_diary_with_lines(lines, target_date, section, diary_file=None, dry_run=False, commit=False, push=False):
     """Update diary with timewarrior lines using diary-md package.
 
     Uses lazy loading - diary_md is only imported when this function is called.
+
+    Args:
+        lines: List of lines to add to the diary
+        target_date: Date for the diary entry
+        section: Section name within the date entry
+        diary_file: Path to diary file (default: use diary-md's default)
+        dry_run: If True, show what would be done without modifying
+        commit: If True, git commit after updating
+        push: If True, git push after committing
     """
+    from pathlib import Path
+
     try:
         from diary_md.cli.update import update_diary, get_diary_file
         from diary_md.git import git_commit, git_push
@@ -411,7 +434,10 @@ def update_diary_with_lines(lines, target_date, section, dry_run=False, commit=F
         print("Install it with: pip install diary-md", file=sys.stderr)
         sys.exit(1)
 
-    diary_file = get_diary_file()
+    if diary_file:
+        diary_file = Path(diary_file).expanduser()
+    else:
+        diary_file = get_diary_file()
 
     for line in lines:
         update_diary(diary_file, target_date, section, line, dry_run)
@@ -470,6 +496,7 @@ def main():
             result['diary_lines'],
             target_date,
             diary_opts['section'],
+            diary_opts['diary_file'],
             diary_opts['dry_run'],
             diary_opts['commit'],
             diary_opts['push'],
