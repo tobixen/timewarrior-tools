@@ -55,7 +55,7 @@ Diary update (requires diary-md package):
                         help='Inject output into diary (requires diary-md package)')
     parser.add_argument('--diary-file', metavar='PATH', dest='diary_file',
                         help='Diary file path (default: ~/solveig/diary-{year}.md)')
-    parser.add_argument('--section', '-s', default='timewarrior',
+    parser.add_argument('--section', '-s',
                         help='Diary section name (default: timewarrior)')
     parser.add_argument('--dry-run', '-n', action='store_true', dest='dry_run',
                         help='Show what would be done without modifying files')
