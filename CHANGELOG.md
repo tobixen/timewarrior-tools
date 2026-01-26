@@ -6,17 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-26
+
 ### Added
 - `summarize.py`: `--tags` option for explicit OR filtering without regex
 - `diary.py`: New report extension for diary-style time summaries
   - Shows time spent on specified tags, unmatched time as UNACCOUNTED
   - `--tags`/`--tags-wanted` options (comma-separated tag list)
   - `--pretty-alias` option to map tags to display names (can be repeated)
+  - Aliased tags are automatically included in wanted tags (no need to repeat in `--tags`)
   - Direct invocation support with auto re-exec via `timew report`
+- `diary.py`: Diary update integration (requires diary-md package)
+  - `--update-diary` to inject output into markdown diary
+  - `--diary-file` to specify custom diary file path
+  - `--section` to set diary section name (default: timewarrior)
+  - `--dry-run` to preview changes without modifying files
+  - `--commit` and `--push` for git operations
+  - Lazy loading ensures script works without diary-md installed
 
 ### Changed
 - `summarize.py`: Tags in `--killtags`, `--ignoretags` now comma-separated (breaking change)
 - `diary.py`: `TAGS_WANTED` env var now uses comma-separated format
+- `diary.py`: `PRETTY_ALIAS` env var now uses JSON format (allows any characters in aliases)
 
 ## [0.3.1] - 2026-01-10
 
