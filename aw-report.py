@@ -33,10 +33,10 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  timew report aw-report.py :yesterday
-  ./aw-report.py :yesterday
-  ./aw-report.py --aw-args="--format=json --all-columns" :yesterday
-  ./aw-report.py --aw-args="--no-truncate" :week
+  timew report aw-report.py :yesterday UNKNOWN
+  ./aw-report.py :yesterday UNKNOWN
+  ./aw-report.py --aw-args="--format=json --all-columns" :yesterday UNKNOWN
+  ./aw-report.py --aw-args="--no-truncate" :week UNKNOWN
         """
     )
     parser.add_argument('--aw-args', metavar='ARGS', dest='aw_args',
@@ -115,15 +115,15 @@ def utc_to_local_iso(utc_str):
 
 
 def format_local_time(utc_str):
-    """Convert a timewarrior UTC timestamp to a short local time string.
+    """Convert a timewarrior UTC timestamp to a local datetime string.
 
     Input:  '20250115T083000Z'
-    Output: '09:30' (depending on local timezone)
+    Output: '2025-01-15T09:30:00' (depending on local timezone)
     """
     dt = datetime.datetime.strptime(utc_str, DATEFORMAT)
     dt = dt.replace(tzinfo=tz.tzutc())
     local_dt = dt.astimezone(tz.tzlocal())
-    return local_dt.strftime("%H:%M")
+    return local_dt.strftime("%FT%H:%M:%S")
 
 
 def run_aw_report(start_utc, end_utc, extra_args):
@@ -162,6 +162,7 @@ def main():
     configuration, intervals = parse_timew_input(sys.stdin)
 
     aw_args = get_option('AW_ARGS', args, configuration)
+    use_color = configuration.get("color", "on") != "off"
 
     if not intervals:
         print("No intervals found.")
@@ -180,12 +181,17 @@ def main():
             end = datetime.datetime.now(tz=tz.tzutc()).strftime(DATEFORMAT)
 
         tags_str = ", ".join(tags) if tags else "(no tags)"
-        time_str = f"{format_local_time(start)}–{format_local_time(end)}"
+        time_str = f"{format_local_time(start)} - {format_local_time(end)}"
+        tags_arg = " ".join(f'"{t}"' if " " in t else t for t in tags)
 
         print(f"=== {tags_str}  [{time_str}] ===")
         output = run_aw_report(start, end, aw_args)
         if output:
             print(output)
+        if use_color:
+            track_cmd = f"timew track :adjust {time_str} {tags_arg}".rstrip()
+            print(f"To overwrite this interval, do:")
+            print(f"\033[36m{track_cmd}\033[0m")
         print()
 
 

@@ -59,11 +59,12 @@ class TestUtcToLocalIso:
 
 
 class TestFormatLocalTime:
-    def test_returns_hh_mm(self):
+    def test_returns_date_and_time(self):
         result = aw_report.format_local_time("20250115T120000Z")
-        # Should be HH:MM format
-        assert len(result) == 5
-        assert result[2] == ":"
+        # Should be %FT%H:%M:%S format, e.g. 2025-01-15T13:00:00
+        assert "T" in result
+        assert result.count(":") == 2
+        assert result.startswith("2025-01-15")
 
 
 class TestGetOption:
@@ -161,6 +162,41 @@ class TestMain:
 
         captured = capsys.readouterr().out
         assert "(no tags)" in captured
+
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    def test_track_hint_with_color(self, mock_aw, capsys):
+        """When color is on, print a timew track hint for each interval."""
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["work"]},
+        ]
+        color_header = (
+            "temp.report.start: 20250115T070000Z\n"
+            "temp.report.end: 20250115T160000Z\n"
+            "color: on\n"
+            "\n"
+        )
+        stream = io.StringIO(color_header + json.dumps(intervals))
+        with mock.patch("sys.stdin", stream):
+            with mock.patch("sys.argv", ["aw-report.py"]):
+                aw_report.main()
+
+        captured = capsys.readouterr().out
+        assert "To overwrite this interval, do:" in captured
+        assert "timew track :adjust" in captured
+        assert "work" in captured
+
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    def test_no_track_hint_with_color_off(self, mock_aw, capsys):
+        """When color is off, no track hint is printed."""
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["work"]},
+        ]
+        with mock.patch("sys.stdin", make_input(intervals)):
+            with mock.patch("sys.argv", ["aw-report.py"]):
+                aw_report.main()
+
+        captured = capsys.readouterr().out
+        assert "timew track" not in captured
 
     @mock.patch.object(aw_report, "run_aw_report", return_value="data")
     def test_open_interval(self, mock_aw, capsys):
