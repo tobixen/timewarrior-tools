@@ -1,5 +1,7 @@
 # TODO
 
+* ~~The aw-report should output the length of each interval~~ (done: shows duration in header, --min-duration to filter)
+* It should allow an --edit mode, where the timew commands stays as they are, but everything else is prepended with "# ".  Perhaps automatically throw the client into the editor and execute the file afterwards.
 * Code review and cleanups.
    * ~~The summarize-script should be able to combine tags by OR (explicitly - without involving regex)~~ (done: `--tags` option)
 * Try to get the summarize.py bundled as extension script, or as a replacement for totals.py

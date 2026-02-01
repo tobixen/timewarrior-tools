@@ -33,14 +33,17 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  timew report aw-report.py :yesterday UNKNOWN
-  ./aw-report.py :yesterday UNKNOWN
-  ./aw-report.py --aw-args="--format=json --all-columns" :yesterday UNKNOWN
-  ./aw-report.py --aw-args="--no-truncate" :week UNKNOWN
+  timew report aw-report.py :yesterday
+  ./aw-report.py :yesterday
+  ./aw-report.py --aw-args="--format=json --all-columns" :yesterday
+  ./aw-report.py --aw-args="--no-truncate" :week
+  ./aw-report.py --min-duration=5m :yesterday
         """
     )
     parser.add_argument('--aw-args', metavar='ARGS', dest='aw_args',
                         help='Extra arguments to pass to aw-export-timewarrior report (quoted string)')
+    parser.add_argument('--min-duration', metavar='DURATION', dest='min_duration',
+                        help='Skip intervals shorter than this (e.g., 5m, 1h, 30s)')
     parser.add_argument('timew_args', nargs='*', metavar='ARG',
                         help='Arguments to pass to timew (tags, date ranges, etc.)')
 
@@ -69,6 +72,8 @@ def reexec_via_timew(args):
 
     if args.aw_args:
         env['AW_ARGS'] = args.aw_args
+    if args.min_duration:
+        env['MIN_DURATION'] = args.min_duration
 
     script_name = os.path.basename(sys.argv[0])
     cmd = ['timew', 'report', script_name] + args.timew_args
@@ -100,6 +105,47 @@ def parse_timew_input(input_stream):
 
     intervals = json.loads(body) if body.strip() else []
     return configuration, intervals
+
+
+def parse_duration(duration_str):
+    """Parse a duration string like '5m', '1h', '30s' into seconds.
+
+    Returns None if the string is invalid.
+    """
+    import re
+    match = re.match(r'^(\d+(?:\.\d+)?)\s*([smh]?)$', duration_str.strip().lower())
+    if not match:
+        return None
+    value = float(match.group(1))
+    unit = match.group(2) or 's'
+    multipliers = {'s': 1, 'm': 60, 'h': 3600}
+    return value * multipliers[unit]
+
+
+def format_duration(seconds):
+    """Format a duration in seconds as a human-readable string.
+
+    Examples: '5m 30s', '1h 15m', '45s'
+    """
+    if seconds < 0:
+        return "0s"
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, secs = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+def compute_duration(start_utc, end_utc):
+    """Compute duration in seconds between two UTC timestamp strings."""
+    start_dt = datetime.datetime.strptime(start_utc, DATEFORMAT)
+    end_dt = datetime.datetime.strptime(end_utc, DATEFORMAT)
+    return (end_dt - start_dt).total_seconds()
 
 
 def utc_to_local_iso(utc_str):
@@ -164,10 +210,19 @@ def main():
     aw_args = get_option('AW_ARGS', args, configuration)
     use_color = configuration.get("color", "on") != "off"
 
+    min_duration_str = get_option('MIN_DURATION', args, configuration)
+    min_duration_secs = None
+    if min_duration_str:
+        min_duration_secs = parse_duration(min_duration_str)
+        if min_duration_secs is None:
+            print(f"Invalid --min-duration value: {min_duration_str}", file=sys.stderr)
+            sys.exit(1)
+
     if not intervals:
         print("No intervals found.")
         return
 
+    skipped_count = 0
     for i, interval in enumerate(intervals):
         start = interval.get("start")
         end = interval.get("end")
@@ -180,11 +235,18 @@ def main():
         if not end:
             end = datetime.datetime.now(tz=tz.tzutc()).strftime(DATEFORMAT)
 
+        duration_secs = compute_duration(start, end)
+
+        if min_duration_secs is not None and duration_secs < min_duration_secs:
+            skipped_count += 1
+            continue
+
         tags_str = ", ".join(tags) if tags else "(no tags)"
         time_str = f"{format_local_time(start)} - {format_local_time(end)}"
+        duration_str = format_duration(duration_secs)
         tags_arg = " ".join(f'"{t}"' if " " in t else t for t in tags)
 
-        print(f"=== {tags_str}  [{time_str}] ===")
+        print(f"=== {tags_str}  [{time_str}]  ({duration_str}) ===")
         output = run_aw_report(start, end, aw_args)
         if output:
             print(output)
@@ -193,6 +255,9 @@ def main():
             print(f"To overwrite this interval, do:")
             print(f"\033[36m{track_cmd}\033[0m")
         print()
+
+    if skipped_count:
+        print(f"({skipped_count} interval(s) shorter than {min_duration_str} skipped)")
 
 
 if __name__ == "__main__":

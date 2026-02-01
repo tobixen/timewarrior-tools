@@ -67,6 +67,56 @@ class TestFormatLocalTime:
         assert result.startswith("2025-01-15")
 
 
+class TestParseDuration:
+    def test_seconds(self):
+        assert aw_report.parse_duration("30s") == 30
+        assert aw_report.parse_duration("30") == 30  # default unit is seconds
+
+    def test_minutes(self):
+        assert aw_report.parse_duration("5m") == 300
+        assert aw_report.parse_duration("1.5m") == 90
+
+    def test_hours(self):
+        assert aw_report.parse_duration("1h") == 3600
+        assert aw_report.parse_duration("2h") == 7200
+
+    def test_case_insensitive(self):
+        assert aw_report.parse_duration("5M") == 300
+        assert aw_report.parse_duration("1H") == 3600
+
+    def test_invalid(self):
+        assert aw_report.parse_duration("abc") is None
+        assert aw_report.parse_duration("5x") is None
+        assert aw_report.parse_duration("") is None
+
+
+class TestFormatDuration:
+    def test_seconds_only(self):
+        assert aw_report.format_duration(45) == "45s"
+        assert aw_report.format_duration(0) == "0s"
+
+    def test_minutes_and_seconds(self):
+        assert aw_report.format_duration(90) == "1m 30s"
+        assert aw_report.format_duration(300) == "5m"
+
+    def test_hours_minutes_seconds(self):
+        assert aw_report.format_duration(3661) == "1h 1m 1s"
+        assert aw_report.format_duration(3600) == "1h"
+
+    def test_negative(self):
+        assert aw_report.format_duration(-10) == "0s"
+
+
+class TestComputeDuration:
+    def test_one_hour(self):
+        result = aw_report.compute_duration("20250115T080000Z", "20250115T090000Z")
+        assert result == 3600
+
+    def test_partial(self):
+        result = aw_report.compute_duration("20250115T080000Z", "20250115T081530Z")
+        assert result == 15 * 60 + 30
+
+
 class TestGetOption:
     def test_prefers_args(self):
         args = mock.Mock(aw_args="--format=json")
@@ -211,3 +261,49 @@ class TestMain:
         captured = capsys.readouterr().out
         assert "work" in captured
         mock_aw.assert_called_once()
+
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    def test_duration_displayed(self, mock_aw, capsys):
+        """Duration should be shown in the header."""
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["work"]},
+        ]
+        with mock.patch("sys.stdin", make_input(intervals)):
+            with mock.patch("sys.argv", ["aw-report.py"]):
+                aw_report.main()
+
+        captured = capsys.readouterr().out
+        assert "(1h)" in captured
+
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    def test_min_duration_filters_short_intervals(self, mock_aw, capsys):
+        """Short intervals should be skipped with --min-duration."""
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["long"]},  # 1h
+            {"start": "20250115T100000Z", "end": "20250115T100200Z", "tags": ["short"]},  # 2m
+        ]
+        with mock.patch("sys.stdin", make_input(intervals)):
+            with mock.patch("sys.argv", ["aw-report.py", "--min-duration=5m"]):
+                aw_report.main()
+
+        captured = capsys.readouterr().out
+        assert "=== long" in captured
+        assert "=== short" not in captured
+        assert "1 interval(s) shorter than 5m skipped" in captured
+        assert mock_aw.call_count == 1
+
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    def test_min_duration_via_env(self, mock_aw, capsys):
+        """MIN_DURATION env var should filter intervals."""
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["long"]},
+            {"start": "20250115T100000Z", "end": "20250115T100100Z", "tags": ["short"]},  # 1m
+        ]
+        with mock.patch("sys.stdin", make_input(intervals)):
+            with mock.patch("sys.argv", ["aw-report.py"]):
+                with mock.patch.dict("os.environ", {"MIN_DURATION": "30m"}):
+                    aw_report.main()
+
+        captured = capsys.readouterr().out
+        assert "=== long" in captured
+        assert "=== short" not in captured
