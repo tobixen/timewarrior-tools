@@ -38,12 +38,15 @@ Examples:
   ./aw-report.py --aw-args="--format=json --all-columns" :yesterday
   ./aw-report.py --aw-args="--no-truncate" :week
   ./aw-report.py --min-duration=5m :yesterday
+  ./aw-report.py --edit :yesterday
         """
     )
     parser.add_argument('--aw-args', metavar='ARGS', dest='aw_args',
                         help='Extra arguments to pass to aw-export-timewarrior report (quoted string)')
     parser.add_argument('--min-duration', metavar='DURATION', dest='min_duration',
                         help='Skip intervals shorter than this (e.g., 5m, 1h, 30s)')
+    parser.add_argument('--edit', action='store_true', dest='edit',
+                        help='Open editor with timew track commands, then execute on save')
     parser.add_argument('timew_args', nargs='*', metavar='ARG',
                         help='Arguments to pass to timew (tags, date ranges, etc.)')
 
@@ -74,6 +77,8 @@ def reexec_via_timew(args):
         env['AW_ARGS'] = args.aw_args
     if args.min_duration:
         env['MIN_DURATION'] = args.min_duration
+    if args.edit:
+        env['EDIT_MODE'] = '1'
 
     script_name = os.path.basename(sys.argv[0])
     cmd = ['timew', 'report', script_name] + args.timew_args
@@ -172,6 +177,48 @@ def format_local_time(utc_str):
     return local_dt.strftime("%FT%H:%M:%S")
 
 
+def run_editor_and_execute(script_content):
+    """Write script to temp file, open editor, execute on save.
+
+    Returns True if the script was executed, False if aborted.
+    """
+    import tempfile
+
+    editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'vi'))
+
+    with tempfile.NamedTemporaryFile(
+        mode='w', suffix='.sh', prefix='aw-report-', delete=False
+    ) as f:
+        f.write(script_content)
+        temp_path = f.name
+
+    try:
+        result = subprocess.run([editor, temp_path])
+        if result.returncode != 0:
+            print(f"Editor exited with code {result.returncode}, aborting.", file=sys.stderr)
+            return False
+
+        with open(temp_path) as f:
+            edited_content = f.read()
+
+        if not edited_content.strip():
+            print("Script is empty, nothing to execute.")
+            return False
+
+        # Count uncommented timew commands
+        cmd_count = sum(1 for line in edited_content.splitlines()
+                       if line.strip() and not line.strip().startswith('#'))
+        if cmd_count == 0:
+            print("No commands to execute (all lines commented out).")
+            return False
+
+        print(f"Executing {cmd_count} command(s)...")
+        result = subprocess.run(['bash', temp_path])
+        return result.returncode == 0
+    finally:
+        os.unlink(temp_path)
+
+
 def run_aw_report(start_utc, end_utc, extra_args):
     """Run aw-export-timewarrior report for a given time range.
 
@@ -209,6 +256,7 @@ def main():
 
     aw_args = get_option('AW_ARGS', args, configuration)
     use_color = configuration.get("color", "on") != "off"
+    edit_mode = get_option('EDIT_MODE', args, configuration) == '1'
 
     min_duration_str = get_option('MIN_DURATION', args, configuration)
     min_duration_secs = None
@@ -222,6 +270,14 @@ def main():
         print("No intervals found.")
         return
 
+    # Collect output: either print directly or build script for edit mode
+    script_lines = []
+    if edit_mode:
+        script_lines.append("#!/bin/bash")
+        script_lines.append("# Edit the timew track commands below, then save and exit.")
+        script_lines.append("# Uncommented lines will be executed.")
+        script_lines.append("")
+
     skipped_count = 0
     for i, interval in enumerate(intervals):
         start = interval.get("start")
@@ -229,7 +285,10 @@ def main():
         tags = interval.get("tags", [])
 
         if not start:
-            print(f"[interval {i}: missing start timestamp, skipping]")
+            if edit_mode:
+                script_lines.append(f"# [interval {i}: missing start timestamp, skipped]")
+            else:
+                print(f"[interval {i}: missing start timestamp, skipping]")
             continue
 
         if not end:
@@ -245,19 +304,34 @@ def main():
         time_str = f"{format_local_time(start)} - {format_local_time(end)}"
         duration_str = format_duration(duration_secs)
         tags_arg = " ".join(f'"{t}"' if " " in t else t for t in tags)
+        track_cmd = f"timew track :adjust {time_str} {tags_arg}".rstrip()
 
-        print(f"=== {tags_str}  [{time_str}]  ({duration_str}) ===")
-        output = run_aw_report(start, end, aw_args)
-        if output:
-            print(output)
-        if use_color:
-            track_cmd = f"timew track :adjust {time_str} {tags_arg}".rstrip()
-            print(f"To overwrite this interval, do:")
-            print(f"\033[36m{track_cmd}\033[0m")
-        print()
+        if edit_mode:
+            script_lines.append(f"# === {tags_str}  [{time_str}]  ({duration_str}) ===")
+            output = run_aw_report(start, end, aw_args)
+            if output:
+                for line in output.splitlines():
+                    script_lines.append(f"# {line}")
+            script_lines.append(track_cmd)
+            script_lines.append("")
+        else:
+            print(f"=== {tags_str}  [{time_str}]  ({duration_str}) ===")
+            output = run_aw_report(start, end, aw_args)
+            if output:
+                print(output)
+            if use_color:
+                print(f"To overwrite this interval, do:")
+                print(f"\033[36m{track_cmd}\033[0m")
+            print()
 
-    if skipped_count:
-        print(f"({skipped_count} interval(s) shorter than {min_duration_str} skipped)")
+    if edit_mode:
+        if skipped_count:
+            script_lines.append(f"# ({skipped_count} interval(s) shorter than {min_duration_str} skipped)")
+        script_content = "\n".join(script_lines) + "\n"
+        run_editor_and_execute(script_content)
+    else:
+        if skipped_count:
+            print(f"({skipped_count} interval(s) shorter than {min_duration_str} skipped)")
 
 
 if __name__ == "__main__":

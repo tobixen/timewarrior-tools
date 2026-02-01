@@ -307,3 +307,62 @@ class TestMain:
         captured = capsys.readouterr().out
         assert "=== long" in captured
         assert "=== short" not in captured
+
+
+class TestEditMode:
+    @mock.patch.object(aw_report, "run_aw_report", return_value="activity data")
+    @mock.patch.object(aw_report, "run_editor_and_execute")
+    def test_edit_mode_generates_script(self, mock_editor, mock_aw):
+        """In edit mode, a script should be generated and passed to the editor."""
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["work"]},
+        ]
+        with mock.patch("sys.stdin", make_input(intervals)):
+            with mock.patch("sys.argv", ["aw-report.py"]):
+                with mock.patch.dict("os.environ", {"EDIT_MODE": "1"}):
+                    aw_report.main()
+
+        mock_editor.assert_called_once()
+        script = mock_editor.call_args[0][0]
+        assert "#!/bin/bash" in script
+        assert "timew track :adjust" in script
+        assert "# === work" in script
+        assert "# activity data" in script
+
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    @mock.patch.object(aw_report, "run_editor_and_execute")
+    def test_edit_mode_comments_output(self, mock_editor, mock_aw):
+        """AW report output should be commented in edit mode script."""
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["work"]},
+        ]
+        with mock.patch("sys.stdin", make_input(intervals)):
+            with mock.patch("sys.argv", ["aw-report.py"]):
+                with mock.patch.dict("os.environ", {"EDIT_MODE": "1"}):
+                    aw_report.main()
+
+        script = mock_editor.call_args[0][0]
+        lines = script.splitlines()
+        # timew track command should NOT be commented
+        track_lines = [l for l in lines if l.startswith("timew track")]
+        assert len(track_lines) == 1
+        # activity output should be commented
+        data_lines = [l for l in lines if "data" in l]
+        assert all(l.startswith("#") for l in data_lines)
+
+
+class TestRunEditorAndExecute:
+    @mock.patch("subprocess.run")
+    def test_executes_via_bash(self, mock_run):
+        """After editing, script should be executed via bash."""
+        mock_run.return_value = mock.Mock(returncode=0)
+        script = "#!/bin/bash\ntimew track :adjust 2025-01-15T09:00:00 - 2025-01-15T10:00:00 work\n"
+
+        with mock.patch.dict("os.environ", {"EDITOR": "true"}):
+            result = aw_report.run_editor_and_execute(script)
+
+        # Should have called editor first, then bash
+        assert mock_run.call_count == 2
+        # Second call should be bash
+        bash_call = mock_run.call_args_list[1]
+        assert bash_call[0][0][0] == "bash"
