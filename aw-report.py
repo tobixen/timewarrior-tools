@@ -86,13 +86,32 @@ def reexec_via_timew(args):
         env['AW_ARGS'] = args.aw_args
     if args.min_duration:
         env['MIN_DURATION'] = args.min_duration
-    if args.edit:
-        env['EDIT_MODE'] = '1'
 
     script_name = os.path.basename(sys.argv[0])
     cmd = ['timew', 'report', script_name] + args.timew_args
 
     os.execvpe(cmd[0], cmd, env)
+
+
+def fetch_intervals_via_export(timew_args):
+    """Fetch intervals directly via 'timew export' instead of 'timew report'.
+
+    This avoids the piped I/O that breaks interactive editors.
+    Returns list of interval dicts, or exits on error.
+    """
+    cmd = ['timew', 'export'] + timew_args
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"timew export failed: {result.stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+        return json.loads(result.stdout) if result.stdout.strip() else []
+    except FileNotFoundError:
+        print("Error: timew not found in PATH", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error parsing timew export output: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def parse_timew_input(input_stream):
@@ -258,14 +277,22 @@ def run_aw_report(start_utc, end_utc, extra_args):
 def main():
     args = parse_args()
 
-    if sys.stdin.isatty():
+    # When called directly with --edit, fetch intervals via 'timew export'
+    # instead of re-exec'ing via 'timew report'. This keeps stdin/stdout
+    # connected to the terminal so the editor works properly.
+    if sys.stdin.isatty() and args.edit:
+        intervals = fetch_intervals_via_export(args.timew_args)
+        configuration = {}
+        edit_mode = True
+    elif sys.stdin.isatty():
         reexec_via_timew(args)
-
-    configuration, intervals = parse_timew_input(sys.stdin)
+        return  # unreachable, but makes flow clear
+    else:
+        configuration, intervals = parse_timew_input(sys.stdin)
+        edit_mode = get_option('EDIT_MODE', args, configuration) == '1'
 
     aw_args = get_option('AW_ARGS', args, configuration)
     use_color = configuration.get("color", "on") != "off"
-    edit_mode = get_option('EDIT_MODE', args, configuration) == '1'
 
     min_duration_str = get_option('MIN_DURATION', args, configuration)
     min_duration_secs = None
