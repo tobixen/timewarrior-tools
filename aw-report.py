@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
 """Timewarrior report extension that shows ActivityWatch activity per interval.
 
 For each timewarrior interval, runs `aw-export-timewarrior report` and prints
@@ -22,6 +23,12 @@ import subprocess
 import sys
 
 from dateutil import tz
+
+try:
+    import argcomplete
+    HAS_ARGCOMPLETE = True
+except ImportError:
+    HAS_ARGCOMPLETE = False
 
 DATEFORMAT = "%Y%m%dT%H%M%SZ"
 
@@ -50,6 +57,8 @@ Examples:
     parser.add_argument('timew_args', nargs='*', metavar='ARG',
                         help='Arguments to pass to timew (tags, date ranges, etc.)')
 
+    if HAS_ARGCOMPLETE:
+        argcomplete.autocomplete(parser)
     return parser.parse_args()
 
 
