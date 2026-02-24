@@ -41,7 +41,21 @@ except ImportError:
 DATEFORMAT = "%Y%m%dT%H%M%SZ"
 
 # Options that can be set via environment variables or command-line
-OPTIONS = ['TAGS', 'REGEX', 'NEGREGEX', 'KILLTAGS', 'IGNORETAGS', 'CONCAT', 'SPLIT']
+OPTIONS = ['TAGS', 'REGEX', 'NEGREGEX', 'KILLTAGS', 'IGNORETAGS', 'CONCAT', 'SPLIT', 'MIN_DURATION']
+
+
+def parse_duration(duration_str):
+    """Parse a duration string like '5m', '1h', '30s' into seconds.
+
+    Returns None if the string is invalid.
+    """
+    match = re.match(r'^(\d+(?:\.\d+)?)\s*([smh]?)$', duration_str.strip().lower())
+    if not match:
+        return None
+    value = float(match.group(1))
+    unit = match.group(2) or 's'
+    multipliers = {'s': 1, 'm': 60, 'h': 3600}
+    return value * multipliers[unit]
 
 
 def parse_args():
@@ -71,6 +85,9 @@ Examples:
                         help='Combine all tags on an interval into a single key')
     parser.add_argument('--split', action='store_true',
                         help='Divide time equally among tags on an interval')
+    parser.add_argument('--min-duration', metavar='DURATION', dest='min_duration',
+                        help='Hide tags with less total time than this (e.g. 5m, 1h); '
+                             'they are grouped into a "short intervals" summary row')
     parser.add_argument('timew_args', nargs='*', metavar='ARG',
                         help='Arguments to pass to timew (tags, date ranges, etc.)')
 
@@ -123,6 +140,8 @@ def reexec_via_timew(args):
         env['CONCAT'] = '1'
     if args.split:
         env['SPLIT'] = '1'
+    if args.min_duration:
+        env['MIN_DURATION'] = args.min_duration
 
     # Build timew command
     script_name = os.path.basename(sys.argv[0])
@@ -175,6 +194,13 @@ def calculate_totals(input_stream, args):
     IGNORETAGS = get_option('IGNORETAGS', args, configuration)
     CONCAT = get_option('CONCAT', args, configuration)
     SPLIT = get_option('SPLIT', args, configuration)
+    MIN_DURATION = get_option('MIN_DURATION', args, configuration)
+
+    min_duration_secs = None
+    if MIN_DURATION:
+        min_duration_secs = parse_duration(MIN_DURATION)
+        if min_duration_secs is None:
+            print(f"Invalid --min-duration value: {MIN_DURATION}", file=sys.stderr)
 
     # Parse TAGS into a set for OR filtering
     wanted_tags = {t.strip() for t in TAGS.split(",")} if TAGS else None
@@ -282,11 +308,33 @@ def calculate_totals(input_stream, args):
                         continue
                     totals[tag] += tracked
 
+    # Apply min-duration filter: split totals into shown and short buckets.
+    short_total = datetime.timedelta()
+    short_count = 0
+    if min_duration_secs is not None:
+        filtered_totals = {}
+        for tag, delta in totals.items():
+            if delta.total_seconds() < min_duration_secs:
+                short_total += delta
+                short_count += 1
+            else:
+                filtered_totals[tag] = delta
+        totals = filtered_totals
+
+        if untagged is not None and untagged.total_seconds() < min_duration_secs:
+            short_total += untagged
+            short_count += 1
+            untagged = None
+
+    short_label = "(short intervals)" if short_count > 0 else None
+
     # Determine largest tag width.
     max_width = len("Total")
     for tag in totals:
         if len(tag) > max_width:
             max_width = len(tag)
+    if short_label and len(short_label) > max_width:
+        max_width = len(short_label)
 
     # Compose report header.
     output = [
@@ -315,6 +363,12 @@ def calculate_totals(input_stream, args):
         formatted = format_seconds(seconds)
         grand_total += seconds
         output.append("{:{width}} {:10}".format("", formatted, width=max_width))
+
+    if short_label is not None:
+        seconds = int(short_total.total_seconds())
+        formatted = format_seconds(seconds)
+        grand_total += seconds
+        output.append("{:{width}} {:10}".format(short_label, formatted, width=max_width))
 
     # Compose total.
     if configuration.get("color") == "on":
