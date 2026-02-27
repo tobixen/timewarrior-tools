@@ -45,6 +45,7 @@ Examples:
   ./aw-report.py --aw-args="--format=json --all-columns" :yesterday
   ./aw-report.py --aw-args="--no-truncate" :week
   ./aw-report.py --min-duration=5m :yesterday
+  ./aw-report.py --min-event-duration=2s :yesterday
   ./aw-report.py --edit :yesterday
         """
     )
@@ -52,6 +53,8 @@ Examples:
                         help='Extra arguments to pass to aw-export-timewarrior report (quoted string)')
     parser.add_argument('--min-duration', metavar='DURATION', dest='min_duration',
                         help='Skip intervals shorter than this (e.g., 5m, 1h, 30s)')
+    parser.add_argument('--min-event-duration', metavar='DURATION', dest='min_event_duration',
+                        help='Hide AW window events shorter than this (e.g., 2s, 1m) — passed to aw-export-timewarrior report --min-duration')
     parser.add_argument('--edit', action='store_true', dest='edit',
                         help='Open editor with timew track commands, then execute on save')
     parser.add_argument('timew_args', nargs='*', metavar='ARG',
@@ -86,6 +89,8 @@ def reexec_via_timew(args):
         env['AW_ARGS'] = args.aw_args
     if args.min_duration:
         env['MIN_DURATION'] = args.min_duration
+    if args.min_event_duration:
+        env['MIN_EVENT_DURATION'] = args.min_event_duration
 
     script_name = os.path.basename(sys.argv[0])
     cmd = ['timew', 'report', script_name] + args.timew_args
@@ -247,7 +252,7 @@ def run_editor_and_execute(script_content):
         os.unlink(temp_path)
 
 
-def run_aw_report(start_utc, end_utc, extra_args):
+def run_aw_report(start_utc, end_utc, extra_args, min_event_duration_secs=None):
     """Run aw-export-timewarrior report for a given time range.
 
     Returns the command's stdout as a string, or an error message.
@@ -262,8 +267,11 @@ def run_aw_report(start_utc, end_utc, extra_args):
         import shlex
         cmd.extend(shlex.split(extra_args))
 
+    if min_event_duration_secs is not None:
+        cmd.append(f'--min-duration={min_event_duration_secs}')
+
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
         if result.returncode != 0:
             stderr = result.stderr.strip()
             return f"[error running aw-export-timewarrior: {stderr}]"
@@ -300,6 +308,14 @@ def main():
         min_duration_secs = parse_duration(min_duration_str)
         if min_duration_secs is None:
             print(f"Invalid --min-duration value: {min_duration_str}", file=sys.stderr)
+            sys.exit(1)
+
+    min_event_duration_str = get_option('MIN_EVENT_DURATION', args, configuration)
+    min_event_duration_secs = None
+    if min_event_duration_str:
+        min_event_duration_secs = parse_duration(min_event_duration_str)
+        if min_event_duration_secs is None:
+            print(f"Invalid --min-event-duration value: {min_event_duration_str}", file=sys.stderr)
             sys.exit(1)
 
     if not intervals:
@@ -344,7 +360,7 @@ def main():
 
         if edit_mode:
             script_lines.append(f"# === {tags_str}  [{time_str}]  ({duration_str}) ===")
-            output = run_aw_report(start, end, aw_args)
+            output = run_aw_report(start, end, aw_args, min_event_duration_secs)
             if output:
                 for line in output.splitlines():
                     script_lines.append(f"# {line}")
@@ -352,7 +368,7 @@ def main():
             script_lines.append("")
         else:
             print(f"=== {tags_str}  [{time_str}]  ({duration_str}) ===")
-            output = run_aw_report(start, end, aw_args)
+            output = run_aw_report(start, end, aw_args, min_event_duration_secs)
             if output:
                 print(output)
             if use_color:
