@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `timew-change-tag`: No longer retags the wrong intervals when something else
+  writes to timewarrior at the same time
+  - Timewarrior renumbers interval ids whenever an interval is added, so a
+    background writer such as the ActivityWatch exporter could shift them
+    mid-run: the intervals you asked about kept their old tag, while their
+    neighbours silently got the new one
+  - Intervals are now looked up by start time and each change is verified, and
+    the command exits non-zero if anything unexpected gained or lost a tag
+
 ### Added
 - `timew-undo-check`: New tool to check and repair timewarrior's `undo.data` journal
   - Repairs the `Cannot handle line '<NUL bytes>txn:'` damage an unclean

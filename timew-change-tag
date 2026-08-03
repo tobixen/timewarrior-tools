@@ -24,7 +24,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def parse_tags(tag_string: str) -> set[str]:
@@ -58,31 +58,110 @@ def find_matching_intervals(intervals: list[dict], match_tags: set[str]) -> list
     return matching
 
 
-def change_tags(interval_id: int, remove_tags: set[str], add_tags: set[str], dry_run: bool) -> bool:
-    """Change tags on an interval. Returns True if successful."""
-    id_str = f"@{interval_id}"
+TIMEW_STAMP = "%Y%m%dT%H%M%SZ"
 
-    # Remove old tags
-    if remove_tags:
-        cmd = ["timew", "untag", id_str] + list(remove_tags)
+
+def resolve_interval(start: str) -> dict | None:
+    """Look up an interval by its immutable start timestamp, with a fresh @id.
+
+    Timewarrior assigns @ids backwards from the newest interval, so *any* interval
+    created while we work - in practice by the aw-export-timewarrior sync daemon -
+    shifts every id.  Ids must therefore be re-read immediately before each
+    mutation rather than collected once up front, or we retag the neighbours.
+    """
+    try:
+        stamp = datetime.strptime(start, TIMEW_STAMP)
+    except ValueError:
+        return None
+
+    lo = (stamp - timedelta(seconds=1)).strftime(TIMEW_STAMP)
+    hi = (stamp + timedelta(seconds=1)).strftime(TIMEW_STAMP)
+
+    # A ranged export still reports global @ids, but returns everything that
+    # *overlaps* the range - so match the start exactly.
+    for interval in get_intervals(f"{lo} - {hi}"):
+        if interval.get("start") == start and interval.get("id") is not None:
+            return interval
+    return None
+
+
+def _satisfied(verb: str, interval: dict, tags: set[str]) -> bool:
+    """Has `verb` already taken effect on this interval?"""
+    present = set(interval.get("tags", []))
+    return not (tags & present) if verb == "untag" else tags.issubset(present)
+
+
+def run_timew(
+    verb: str, start: str, tags: set[str], expect: set[str], dry_run: bool, attempts: int = 3
+) -> bool:
+    """Re-resolve `start` to a current @id and apply one timew verb to it.
+
+    The id is re-read immediately before the mutation and the result is verified
+    afterwards.  A concurrent write landing inside that narrow window would send
+    the mutation to the wrong interval, so an unverified result is retried.
+    """
+    for attempt in range(attempts):
+        interval = resolve_interval(start)
+        if interval is None:
+            print(f"  Error: interval starting {start} vanished; skipping", file=sys.stderr)
+            return False
+
+        if _satisfied(verb, interval, tags):
+            return True
+
+        # Belt and braces: never mutate an interval that lost the tags we matched on.
+        if not expect.issubset(set(interval.get("tags", []))):
+            print(
+                f"  Error: interval starting {start} no longer carries "
+                f"{', '.join(sorted(expect))}; skipping",
+                file=sys.stderr,
+            )
+            return False
+
+        cmd = ["timew", verb, f"@{interval['id']}"] + sorted(tags)
         if dry_run:
             print(f"  Would run: {' '.join(cmd)}")
-        else:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"  Error untag: {result.stderr}", file=sys.stderr)
-                return False
+            return True
 
-    # Add new tags
-    if add_tags:
-        cmd = ["timew", "tag", id_str] + list(add_tags)
-        if dry_run:
-            print(f"  Would run: {' '.join(cmd)}")
-        else:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"  Error tag: {result.stderr}", file=sys.stderr)
-                return False
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  Error {verb}: {result.stderr}", file=sys.stderr)
+            return False
+
+        after = resolve_interval(start)
+        if after is not None and _satisfied(verb, after, tags):
+            return True
+
+        if attempt < attempts - 1:
+            print(
+                f"  Warning: {verb} on {start} did not take effect "
+                f"(concurrent write?); retrying",
+                file=sys.stderr,
+            )
+
+    print(f"  Error: {verb} on {start} could not be verified; giving up", file=sys.stderr)
+    return False
+
+
+def change_tags(
+    start: str,
+    remove_tags: set[str],
+    add_tags: set[str],
+    match_tags: set[str],
+    dry_run: bool,
+) -> bool:
+    """Change tags on the interval starting at `start`. Returns True if successful.
+
+    Adding comes first: if either step fails, the interval is left carrying
+    both the old and the new tags rather than neither, still matches, and a
+    rerun finishes the job.
+    """
+    if add_tags and not run_timew("tag", start, add_tags, match_tags, dry_run):
+        return False
+
+    # The tag above invalidates the id, so this re-resolves.
+    if remove_tags and not run_timew("untag", start, remove_tags, match_tags | add_tags, dry_run):
+        return False
 
     return True
 
@@ -144,6 +223,8 @@ Examples:
     # Get intervals
     intervals = get_intervals(timespan)
     matching = find_matching_intervals(intervals, match_tags)
+    # Snapshot for the post-run collateral audit, keyed by immutable start.
+    preexisting = {i.get("start"): set(i.get("tags", [])) for i in intervals}
 
     if not matching:
         print(f"No intervals found with tags: {', '.join(sorted(match_tags))}")
@@ -167,23 +248,57 @@ Examples:
     # Process intervals
     success_count = 0
     for interval in matching:
-        interval_id = interval.get("id")
-        if interval_id is None:
-            print(f"Warning: interval has no ID: {format_interval(interval)}", file=sys.stderr)
+        start = interval.get("start")
+        if start is None:
+            print(f"Warning: interval has no start: {format_interval(interval)}", file=sys.stderr)
             continue
 
         if args.verbose or args.dry_run:
-            print(f"@{interval_id}: {format_interval(interval)}")
+            print(f"@{interval.get('id')}: {format_interval(interval)}")
 
-        if change_tags(interval_id, tags_to_remove, tags_to_add, args.dry_run):
+        if change_tags(start, tags_to_remove, tags_to_add, match_tags, args.dry_run):
             success_count += 1
 
     print()
     if args.dry_run:
         print(f"Would change {success_count} intervals")
-    else:
-        print(f"Changed {success_count} intervals")
+        return 0
+
+    print(f"Changed {success_count} intervals")
+
+    # Audit: a concurrent write can in principle divert a mutation onto a
+    # neighbouring interval.  Report any interval that gained the added tags or
+    # lost the removed ones without having been a target, so such damage is
+    # never silent.
+    intended = {i.get("start") for i in matching}
+    gained, lost = [], []
+    for i in get_intervals(timespan):
+        start = i.get("start")
+        if start in intended:
+            continue
+        now = set(i.get("tags", []))
+        before = preexisting.get(start, set())
+        if tags_to_add and tags_to_add <= now and not tags_to_add <= before:
+            gained.append(i)
+        if start in preexisting and (before - now) & tags_to_remove:
+            lost.append(i)
+    for label, tags, found in (
+        ("gained", tags_to_add, gained),
+        ("lost", tags_to_remove, lost),
+    ):
+        if found:
+            print(
+                f"\nWARNING: {len(found)} interval(s) unexpectedly {label} "
+                f"{', '.join(sorted(tags))}:",
+                file=sys.stderr,
+            )
+            for i in found:
+                print(f"  @{i.get('id')}: {format_interval(i)}", file=sys.stderr)
+    if gained or lost:
+        return 1
+
+    return 0 if success_count == len(matching) else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
