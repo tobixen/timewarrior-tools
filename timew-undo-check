@@ -16,6 +16,13 @@ until you run:
 This tool finds that damage, repairs it, and keeps the journal small enough
 that the copy-on-every-write behaviour is not a standing liability.
 
+Timewarrior's own (undocumented) `journal.size` setting also bounds the
+journal, but enabling it makes endTransaction() re-parse the whole journal on
+every transaction -- so one corrupt byte would stop `timew start` and `timew
+stop` as well, not just `timew undo`.  Truncating out-of-band keeps the blast
+radius of the next crash confined.  See
+https://github.com/GothenburgBitFactory/timewarrior/issues/772
+
 timew takes no lock on the journal, so writes are best run while nothing else
 (such as the aw-export-timewarrior sync daemon) is running timew.
 

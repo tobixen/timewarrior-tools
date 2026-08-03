@@ -112,6 +112,10 @@ timew-undo-check --repair
 timew-undo-check --truncate 200 --clean-tmp
 ```
 
+**Why not just set `journal.size`?** Timewarrior does have an official pruning setting — `journal.size`, the number of transactions to keep, `-1` (the default) meaning unbounded and `0` disabling the journal entirely. It is undocumented; [discussion #593](https://github.com/GothenburgBitFactory/timewarrior/discussions/593) is the only description of it.
+
+Setting it is a real trade-off rather than a straight win. With `journal.size > 1`, `Journal::endTransaction()` re-parses the entire journal on *every* transaction — so while the unbounded growth goes away, a single corrupt byte stops `timew start` and `timew stop` too, not just `timew undo`. Until the missing `fsync` is fixed upstream ([#772](https://github.com/GothenburgBitFactory/timewarrior/issues/772)), leaving `journal.size` at `-1` and truncating out-of-band with this tool keeps the blast radius of the next crash confined to the undo feature.
+
 Backups are written to the parent of the data directory (as `undo.data.bak-<timestamp>`), deliberately not into the data directory itself — timew globs `*.data` there, and it is often a git repository.
 
 ### timew-short.sh
