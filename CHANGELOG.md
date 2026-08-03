@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `timew-undo-check`: New tool to check and repair timewarrior's `undo.data` journal
+  - Repairs the `Cannot handle line '<NUL bytes>txn:'` damage an unclean
+    shutdown can leave behind, which stops `timew undo` from working at all
+  - `--truncate [N]` to keep only recent undo history, `--clean-tmp` to remove
+    leftovers from interrupted timew runs, `--dry-run` to preview
+  - Exit status 0/1/2 (clean/damaged/error) for use as a health check
+
 ## [0.4.0] - 2026-01-26
 
 ### Added

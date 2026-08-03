@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+# PYTHON_ARGCOMPLETE_OK
+"""Check and repair timewarrior's undo.data journal.
+
+Timewarrior's AtomicFile writes undo.data by copying the whole file to a
+temporary file, appending, and renaming it into place -- without ever calling
+fsync(2).  On ext4 an unclean shutdown can therefore bring the freshly written
+tail back zero-filled, leaving a run of NUL bytes glued onto the next `txn:`
+marker.  Every later timew invocation copies those bytes forward verbatim
+(only `timew undo` ever parses the journal), so the damage goes unnoticed
+until you run:
+
+    $ timew undo
+    Cannot handle line '<NUL bytes>txn:'
+
+This tool finds that damage, repairs it, and keeps the journal small enough
+that the copy-on-every-write behaviour is not a standing liability.
+
+timew takes no lock on the journal, so writes are best run while nothing else
+(such as the aw-export-timewarrior sync daemon) is running timew.
+
+Examples:
+    # Report on the journal; exits non-zero if anything is wrong
+    timew-undo-check
+
+    # Strip NUL runs left behind by an unclean shutdown
+    timew-undo-check --repair
+
+    # Discard all but the most recent 200 transactions
+    timew-undo-check --truncate 200
+
+    # Remove *.tmp leftovers from interrupted timew runs
+    timew-undo-check --clean-tmp
+
+    # Show what would change, without writing
+    timew-undo-check --repair --truncate 200 --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+try:
+    import argcomplete
+    HAS_ARGCOMPLETE = True
+except ImportError:
+    HAS_ARGCOMPLETE = False
+
+NUL = b"\x00"
+TXN_LINE = b"txn:"
+ENTRY_PREFIXES = (b"  type:", b"  before:", b"  after:")
+
+DEFAULT_KEEP = 200
+# *.tmp files younger than this may belong to a timew process that is still
+# running, so they are never touched.
+TMP_MAX_AGE = 86400.0
+WRITE_IN_FLIGHT_AGE = 60.0
+
+EXIT_OK = 0
+EXIT_PROBLEMS = 1
+EXIT_ERROR = 2
+
+
+def find_nul_runs(data: bytes) -> list[tuple[int, int]]:
+    """Return (offset, length) for every run of NUL bytes, in file order."""
+    return [(m.start(), m.end() - m.start()) for m in re.finditer(NUL + b"+", data)]
+
+
+def strip_nuls(data: bytes) -> bytes:
+    """Remove every NUL byte.  NUL is not valid anywhere in undo.data.
+
+    A run that starts mid-line replaced the rest of that line, so a newline
+    goes back in its place: otherwise the next `txn:` would be glued onto the
+    cut-off line and two transactions would silently merge.  The cut-off line
+    itself stays, for malformed_lines() to catch.
+    """
+
+    def replace(match: re.Match[bytes]) -> bytes:
+        start = match.start()
+        return b"" if start == 0 or data[start - 1 : start] == b"\n" else b"\n"
+
+    return re.sub(NUL + b"+", replace, data)
+
+
+def malformed_lines(data: bytes) -> list[tuple[int, bytes]]:
+    """Return (1-based line number, line) for lines timew cannot parse.
+
+    The before/after values of an interval entry must be JSON: a line whose
+    tail was lost in a crash still has a valid prefix.
+    """
+    bad = []
+    entry_type = None
+    for lineno, line in enumerate(data.split(b"\n"), start=1):
+        if not line or line == TXN_LINE:
+            continue
+        if line.startswith(ENTRY_PREFIXES[0]):
+            entry_type = line[len(ENTRY_PREFIXES[0]) :].strip()
+            continue
+        prefix = next((p for p in ENTRY_PREFIXES[1:] if line.startswith(p)), None)
+        if prefix is None:
+            bad.append((lineno, line))
+            continue
+        value = line[len(prefix) :].strip()
+        if value and entry_type == b"interval":
+            try:
+                json.loads(value)
+            except ValueError:
+                bad.append((lineno, line))
+    return bad
+
+
+def transaction_offsets(data: bytes) -> list[int]:
+    """Return the byte offset of every `txn:` line, in file order.
+
+    Only whole lines count: a tag could legitimately contain the text `txn:`.
+    """
+    offsets = []
+    marker = TXN_LINE + b"\n"
+    if data.startswith(marker):
+        offsets.append(0)
+    position = 0
+    while True:
+        found = data.find(b"\n" + marker, position)
+        if found < 0:
+            return offsets
+        offsets.append(found + 1)
+        position = found + 1
+
+
+def keep_last_transactions(data: bytes, keep: int) -> bytes:
+    """Discard all but the last `keep` transactions.
+
+    The result begins at a `txn:` marker, which is all timew requires -- the
+    journal is a flat sequence of transactions with no header.
+    """
+    if keep < 1:
+        raise ValueError("keep must be at least 1, got %d" % keep)
+    offsets = transaction_offsets(data)
+    if len(offsets) <= keep:
+        return data
+    return data[offsets[-keep] :]
+
+
+@dataclass
+class Report:
+    """The state of an undo.data journal."""
+
+    size: int = 0
+    transactions: int = 0
+    nul_runs: list[tuple[int, int]] = field(default_factory=list)
+    malformed: list[tuple[int, bytes]] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.nul_runs and not self.malformed
+
+
+def check(data: bytes) -> Report:
+    """Inspect journal contents without modifying anything."""
+    return Report(
+        size=len(data),
+        transactions=len(transaction_offsets(data)),
+        nul_runs=find_nul_runs(data),
+        malformed=malformed_lines(data),
+    )
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    """Replace `path` with `data`, durably.
+
+    Unlike timewarrior's own AtomicFile this fsyncs both the file and its
+    directory before returning, so an unclean shutdown cannot resurrect the
+    corruption we just removed.  An existing file keeps its permissions.
+    """
+    temp = path.with_name(path.name + ".new")
+    with open(temp, "wb") as handle:
+        try:
+            os.fchmod(handle.fileno(), path.stat().st_mode & 0o7777)
+        except FileNotFoundError:
+            pass
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.rename(temp, path)
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def temp_files(directory: Path) -> list[tuple[Path, float]]:
+    """Return (path, mtime) of *.tmp files, skipping any timew removes meanwhile."""
+    found = []
+    for path in directory.glob("*.tmp"):
+        try:
+            found.append((path, path.stat().st_mtime))
+        except FileNotFoundError:
+            pass
+    return found
+
+
+def stale_temp_files(directory: Path, max_age: float = TMP_MAX_AGE) -> list[Path]:
+    """Return *.tmp leftovers older than `max_age` seconds, oldest first."""
+    cutoff = time.time() - max_age
+    found = sorted((mtime, path) for path, mtime in temp_files(directory) if mtime < cutoff)
+    return [path for _, path in found]
+
+
+def find_database() -> Path:
+    """Locate the timewarrior data directory.
+
+    TIMEWARRIORDB is authoritative when set, matching timew's own behaviour.
+    """
+    override = os.environ.get("TIMEWARRIORDB")
+    if override:
+        candidates = [Path(override).expanduser() / "data"]
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "share"
+        candidates = [base / "timewarrior" / "data", Path.home() / ".timewarrior" / "data"]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    raise FileNotFoundError(
+        "no timewarrior data directory found (tried: %s)"
+        % ", ".join(str(c) for c in candidates)
+    )
+
+
+def human(size: int) -> str:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return "%.1f %s" % (size, unit) if unit != "B" else "%d B" % size
+        size /= 1024
+    raise AssertionError("unreachable")
+
+
+def describe(report: Report) -> list[str]:
+    """Render a Report as human-readable lines."""
+    lines = [
+        "transactions: %d" % report.transactions,
+        "size:         %s" % human(report.size),
+    ]
+    if report.nul_runs:
+        total = sum(length for _, length in report.nul_runs)
+        lines.append(
+            "NUL runs:     %d (%d bytes) -- unclean shutdown during a timew write"
+            % (len(report.nul_runs), total)
+        )
+        for offset, length in report.nul_runs[:10]:
+            lines.append("  offset %d, %d bytes" % (offset, length))
+    if report.malformed:
+        lines.append("unparseable:  %d line(s) -- timew undo will refuse to run" % len(report.malformed))
+        for lineno, line in report.malformed[:10]:
+            excerpt = line[:60].decode("utf-8", "backslashreplace")
+            lines.append("  line %d: %r%s" % (lineno, excerpt, "..." if len(line) > 60 else ""))
+    if report.ok:
+        lines.append("status:       clean")
+    return lines
+
+
+def backup_path(undo_data: Path) -> Path:
+    """Where to stash the pre-change journal.
+
+    Deliberately outside the data directory: that is often a git repository,
+    and timew globs *.data in there.  Never an existing name: two runs in the
+    same second must not overwrite the first, pre-change backup.
+    """
+    stamp = time.strftime("%Y%m%dT%H%M%S")
+    candidate = undo_data.parent.parent / ("undo.data.bak-%s" % stamp)
+    serial = 1
+    while candidate.exists():
+        candidate = undo_data.parent.parent / ("undo.data.bak-%s.%d" % (stamp, serial))
+        serial += 1
+    return candidate
+
+
+def write_in_flight(directory: Path) -> list[Path]:
+    """Return *.tmp files young enough that timew may still be writing them."""
+    cutoff = time.time() - WRITE_IN_FLIGHT_AGE
+    return [path for path, mtime in temp_files(directory) if mtime >= cutoff]
+
+
+def positive_int(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be at least 1, got %d" % value)
+    return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Check and repair timewarrior's undo.data journal.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--db", metavar="DIR", help="timewarrior data directory")
+    parser.add_argument(
+        "--repair", action="store_true", help="strip NUL runs left by an unclean shutdown"
+    )
+    parser.add_argument(
+        "--truncate",
+        nargs="?",
+        type=positive_int,
+        const=DEFAULT_KEEP,
+        metavar="N",
+        help="discard all but the last N transactions (default %d)" % DEFAULT_KEEP,
+    )
+    parser.add_argument(
+        "--clean-tmp",
+        action="store_true",
+        help="delete *.tmp leftovers from interrupted timew runs",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="report, but do not write")
+    parser.add_argument("--no-backup", action="store_true", help="skip the backup copy")
+    parser.add_argument(
+        "--force", action="store_true", help="write even if a timew write looks in flight"
+    )
+    if HAS_ARGCOMPLETE:
+        argcomplete.autocomplete(parser)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    try:
+        data_dir = Path(args.db).expanduser() if args.db else find_database()
+    except FileNotFoundError as exc:
+        print("error: %s" % exc, file=sys.stderr)
+        return EXIT_ERROR
+    undo_data = data_dir / "undo.data"
+    if not undo_data.is_file():
+        print("error: %s does not exist" % undo_data, file=sys.stderr)
+        return EXIT_ERROR
+
+    print("journal:      %s" % undo_data)
+    original = undo_data.read_bytes()
+    report = check(original)
+    for line in describe(report):
+        print(line)
+
+    if args.clean_tmp:
+        stale = stale_temp_files(data_dir)
+        if not stale:
+            print("no stale *.tmp files")
+        for path in stale:
+            size = path.stat().st_size
+            if args.dry_run:
+                print("would remove %s (%s)" % (path.name, human(size)))
+            else:
+                path.unlink()
+                print("removed %s (%s)" % (path.name, human(size)))
+
+    repaired = original
+    if args.repair:
+        repaired = strip_nuls(repaired)
+    if args.truncate is not None:
+        repaired = keep_last_transactions(repaired, args.truncate)
+
+    if repaired == original:
+        if args.repair or args.truncate is not None:
+            print("nothing to change")
+        return EXIT_OK if report.ok else EXIT_PROBLEMS
+
+    after = check(repaired)
+    print(
+        "%s %d transactions, %s (was %d, %s)"
+        % (
+            "would write: " if args.dry_run else "writing:     ",
+            after.transactions,
+            human(after.size),
+            report.transactions,
+            human(report.size),
+        )
+    )
+    if not after.ok:
+        print("error: result is still not clean, refusing to write", file=sys.stderr)
+        for line in describe(after):
+            print("  %s" % line, file=sys.stderr)
+        print(
+            "  a line cut off mid-way cannot be repaired; --truncate to a count"
+            " that excludes it drops the damaged transaction",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    if args.dry_run:
+        print("dry run, nothing written")
+        return EXIT_OK if report.ok else EXIT_PROBLEMS
+
+    in_flight = write_in_flight(data_dir)
+    if in_flight and not args.force:
+        print(
+            "error: a timew write may be in flight (%s); retry, or use --force"
+            % ", ".join(p.name for p in in_flight),
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    if not args.no_backup:
+        backup = backup_path(undo_data)
+        atomic_write(backup, original)
+        print("backup:       %s" % backup)
+
+    # Re-read: timew may have appended while we were working, in which case
+    # our replacement would silently drop those transactions.  This narrows
+    # the window; it does not close it.
+    if undo_data.read_bytes() != original:
+        print("error: undo.data changed while we worked, retry", file=sys.stderr)
+        return EXIT_ERROR
+
+    atomic_write(undo_data, repaired)
+    # There is no lock to take: a timew that copied the old journal before our
+    # rename can still rename its copy over ours.  Catch that, at least.
+    if undo_data.read_bytes() != repaired:
+        print(
+            "error: undo.data was overwritten right after our write, probably by a"
+            " concurrent timew; stop the sync daemon and run again",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+    print("written:      %s" % undo_data)
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main())

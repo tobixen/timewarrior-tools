@@ -72,6 +72,48 @@ Change or rename tags across timewarrior intervals. Supports:
 - Date filtering: `--from` and `--to` options
 - Preview mode: `--dry-run`
 
+### timew-undo-check
+
+Check and repair timewarrior's `undo.data` journal.
+
+Timewarrior writes `undo.data` by copying the whole file to a temp file, appending, and renaming it into place — without ever calling `fsync(2)` ([`AtomicFile.cpp`](https://github.com/GothenburgBitFactory/timewarrior/blob/develop/src/AtomicFile.cpp)). On ext4 an unclean shutdown can therefore bring the freshly written tail back zero-filled, gluing a run of NUL bytes onto the next `txn:` marker. Nothing notices, because only `timew undo` ever parses the journal — every other command copies the bad bytes forward. Weeks later you get:
+
+```
+$ timew undo
+Cannot handle line '<NUL bytes>txn:'
+```
+
+| Option | Description |
+|--------|-------------|
+| `--repair` | Strip NUL runs left behind by an unclean shutdown.  A line the crash cut off mid-way cannot be repaired and is refused; add `--truncate` with a count that excludes the damaged transaction |
+| `--truncate [N]` | Discard all but the last N transactions (default 200) |
+| `--clean-tmp` | Delete `*.tmp` leftovers from interrupted timew runs |
+| `--dry-run` | Report what would change, without writing |
+| `--db DIR` | Data directory (default: `$TIMEWARRIORDB/data` or XDG) |
+| `--no-backup` | Skip the timestamped backup copy |
+| `--force` | Write even if a timew write looks in flight |
+
+Exit status is 0 when the journal is clean, 1 when it is damaged, 2 on error — so it works as a cron/systemd health check.
+
+Timewarrior takes no lock on `undo.data`.  The tool re-reads the journal right before and after its own write and refuses or complains if timew got in between, but that only narrows the window: run `--repair` and `--truncate` while nothing else (such as the aw-export-timewarrior sync daemon) is running timew.
+
+**Usage:**
+
+```bash
+# Health check
+timew-undo-check
+
+# Fix corruption after a crash
+timew-undo-check --repair
+
+# Keep the journal small: copying a multi-megabyte undo.data on every
+# single timew invocation is what makes the corruption likely in the
+# first place.  Undo history beyond the last few dozen entries is dead weight.
+timew-undo-check --truncate 200 --clean-tmp
+```
+
+Backups are written to the parent of the data directory (as `undo.data.bak-<timestamp>`), deliberately not into the data directory itself — timew globs `*.data` there, and it is often a git repository.
+
 ### timew-short.sh
 
 Status display script for showing current time tracking. Modes:
@@ -101,7 +143,7 @@ make uninstall
 
 This installs:
 - `summarize.py`, `diary.py` to `~/.config/timewarrior/extensions/`
-- `timew-change-tag`, `timew-short.sh`, `timew-start-afk` to `~/.local/bin/`
+- `timew-change-tag`, `timew-undo-check`, `timew-short.sh`, `timew-start-afk` to `~/.local/bin/`
 
 ## Related
 
