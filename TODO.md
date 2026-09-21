@@ -12,3 +12,8 @@
 * Inevitably, there will be code duplication for the wrapping/reexec.  We should consider some ways to use shared code for this.
 * (low priority) for the diary, if the `--tags`-list includes tags with a colon (say, dinner:fish), then `--pretty-alias=dinner:fish:Fish dinner` should do the Right Thing.
 * (low priority) for the diary, an `--prettify`-option that will convert underscores to blanks and capitalize the tag
+* `diary.py` adds every `--pretty-alias` key to `TAGS_WANTED`, which silently
+  defeats `--tags`: pass the full alias table and the filter does nothing.
+  Found while building a work-only report in `mydiary.sh`, worked around there
+  by withholding aliases (`ONLY_KEYS`).  The two options should be independent
+  — aliases are display, `--tags` is selection.
