@@ -17,6 +17,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     the command exits non-zero if anything unexpected gained or lost a tag
 
 ### Added
+- `summarize.py`: `--sort=time` orders rows by total, heaviest first, instead of
+  alphabetically by tag
+- `summarize.py`: `--unmatched=LABEL` collects time on intervals that are in
+  scope but carry no tag matching `--regex`, which would otherwise be dropped
+  from the report and from its total
+  - `--tags` is unaffected: it selects which intervals the report is about, so
+    what it rejects is out of scope rather than uncategorised
 - `timew-undo-check`: New tool to check and repair timewarrior's `undo.data` journal
   - Repairs the `Cannot handle line '<NUL bytes>txn:'` damage an unclean
     shutdown can leave behind, which stops `timew undo` from working at all

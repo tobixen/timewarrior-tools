@@ -34,6 +34,8 @@ def default_args(**kwargs):
         concat=False,
         split=False,
         min_duration=None,
+        sort=None,
+        unmatched=None,
         timew_args=[],
     )
     defaults.update(kwargs)
@@ -167,3 +169,125 @@ class TestMinDuration:
         # Grand total should include the untagged minute: 60 + 3600 = 3660s = 1:01:00
         total_line = [l for l in output if l.strip().startswith("Total ") and "by Tag" not in l]
         assert "1:01:00" in total_line[0]
+
+
+class TestSort:
+    """Tests for --sort=time, which puts the heaviest rows on top."""
+
+    INTERVALS = [
+        # alphabetically first, but the smallest
+        {"start": "20250115T080000Z", "end": "20250115T080500Z", "tags": ["aaa"]},
+        {"start": "20250115T090000Z", "end": "20250115T110000Z", "tags": ["mmm"]},
+        {"start": "20250115T110000Z", "end": "20250115T113000Z", "tags": ["zzz"]},
+    ]
+
+    def rows(self, output):
+        """The tag rows, in the order the report prints them."""
+        out = []
+        for line in output:
+            tag = line.split()[0] if line.split() else ""
+            if tag in ("aaa", "mmm", "zzz"):
+                out.append(tag)
+        return out
+
+    def test_default_is_alphabetical(self):
+        output = summarize.calculate_totals(make_input(self.INTERVALS), default_args())
+        assert self.rows(output) == ["aaa", "mmm", "zzz"]
+
+    def test_sort_by_time_is_descending(self):
+        output = summarize.calculate_totals(make_input(self.INTERVALS), default_args(sort="time"))
+        assert self.rows(output) == ["mmm", "zzz", "aaa"]
+
+    def test_sort_by_tag_is_explicit_default(self):
+        output = summarize.calculate_totals(make_input(self.INTERVALS), default_args(sort="tag"))
+        assert self.rows(output) == ["aaa", "mmm", "zzz"]
+
+    def test_ties_are_broken_by_tag(self):
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["bbb"]},
+            {"start": "20250115T090000Z", "end": "20250115T100000Z", "tags": ["aaa"]},
+        ]
+        output = summarize.calculate_totals(make_input(intervals), default_args(sort="time"))
+        rows = [l.split()[0] for l in output if l.split() and l.split()[0] in ("aaa", "bbb")]
+        assert rows == ["aaa", "bbb"]
+
+
+class TestUnmatched:
+    """Tests for --unmatched, which gives filtered-out time a row of its own.
+
+    Without it, an interval whose tags all fail --regex contributes nothing and
+    vanishes from the report — so a sub-category summary silently omits exactly
+    the intervals that have no sub-category.
+    """
+
+    INTERVALS = [
+        {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["4RL", "4drift-diverse"]},
+        {"start": "20250115T090000Z", "end": "20250115T093000Z", "tags": ["4RL", "4meetings"]},
+        # 4RL only: no lower-case sub-category at all
+        {"start": "20250115T100000Z", "end": "20250115T104500Z", "tags": ["4RL"]},
+    ]
+
+    def test_without_unmatched_the_uncategorised_time_disappears(self):
+        args = default_args(regex="^4[a-z]")
+        output = summarize.calculate_totals(make_input(self.INTERVALS), args)
+        text = "\n".join(output)
+        assert "4drift-diverse" in text
+        assert "1:30:00" in text  # 1h + 30m, the 45m is simply gone
+
+    def test_unmatched_gets_its_own_row(self):
+        args = default_args(regex="^4[a-z]", unmatched="ingen kategori")
+        output = summarize.calculate_totals(make_input(self.INTERVALS), args)
+        text = "\n".join(output)
+        assert "ingen kategori" in text
+        assert "0:45:00" in text
+
+    def test_unmatched_counts_towards_the_grand_total(self):
+        args = default_args(regex="^4[a-z]", unmatched="ingen kategori")
+        output = summarize.calculate_totals(make_input(self.INTERVALS), args)
+        total_line = [l for l in output if l.strip().startswith("Total ") and "by Tag" not in l]
+        assert len(total_line) == 1
+        assert "2:15:00" in total_line[0]  # 1h + 30m + 45m
+
+    def test_an_interval_with_a_match_is_not_also_unmatched(self):
+        args = default_args(regex="^4[a-z]", unmatched="ingen kategori")
+        output = summarize.calculate_totals(make_input(self.INTERVALS), args)
+        text = "\n".join(output)
+        # only the 45-minute interval lacks a sub-category
+        unmatched_row = [l for l in output if l.startswith("ingen kategori")]
+        assert len(unmatched_row) == 1
+        assert "0:45:00" in unmatched_row[0]
+
+    def test_unmatched_row_sorts_with_the_rest(self):
+        args = default_args(regex="^4[a-z]", unmatched="ingen kategori", sort="time")
+        output = summarize.calculate_totals(make_input(self.INTERVALS), args)
+        rows = [l.split()[0] for l in output if l.split() and l.split()[0] in
+                ("4drift-diverse", "4meetings", "ingen")]
+        assert rows == ["4drift-diverse", "ingen", "4meetings"]
+
+    def test_tags_exclusion_is_out_of_scope_not_unmatched(self):
+        """--tags says what the report is about; --regex says what gets a row.
+
+        Conflating them put the entire rest of the day in the bucket: a report
+        on RL work came back with sixteen hours of "no category".
+        """
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["4RL"]},
+            {"start": "20250115T090000Z", "end": "20250115T170000Z", "tags": ["4BREAK"]},
+        ]
+        args = default_args(tags="4RL", regex="^4[a-z]", unmatched="ingen kategori")
+        output = summarize.calculate_totals(make_input(intervals), args)
+        text = "\n".join(output)
+        # the 4RL hour lands in the bucket; the 4BREAK block is not in scope
+        bucket = [l for l in output if l.startswith("ingen kategori")]
+        assert len(bucket) == 1
+        assert "1:00:00" in bucket[0]
+        total_line = [l for l in output if l.strip().startswith("Total ") and "by Tag" not in l]
+        assert "1:00:00" in total_line[0]
+
+    def test_no_unmatched_row_when_everything_matches(self):
+        intervals = [
+            {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["4RL", "4drift-diverse"]},
+        ]
+        args = default_args(regex="^4[a-z]", unmatched="ingen kategori")
+        output = summarize.calculate_totals(make_input(intervals), args)
+        assert "ingen kategori" not in "\n".join(output)

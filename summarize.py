@@ -41,7 +41,8 @@ except ImportError:
 DATEFORMAT = "%Y%m%dT%H%M%SZ"
 
 # Options that can be set via environment variables or command-line
-OPTIONS = ['TAGS', 'REGEX', 'NEGREGEX', 'KILLTAGS', 'IGNORETAGS', 'CONCAT', 'SPLIT', 'MIN_DURATION']
+OPTIONS = ['TAGS', 'REGEX', 'NEGREGEX', 'KILLTAGS', 'IGNORETAGS', 'CONCAT', 'SPLIT', 'MIN_DURATION',
+           'SORT', 'UNMATCHED']
 
 
 def parse_duration(duration_str):
@@ -69,6 +70,7 @@ Examples:
   REGEX="^4" timew report summarize.py :week
   ./summarize.py --regex="^4" --concat :yesterday
   ./summarize.py --killtags="afk,break" :week
+  ./summarize.py --regex="^4[a-z]" --unmatched="no sub-category" --sort=time :yesterday
         """
     )
     parser.add_argument('--tags', metavar='TAGS',
@@ -88,6 +90,12 @@ Examples:
     parser.add_argument('--min-duration', metavar='DURATION', dest='min_duration',
                         help='Hide tags with less total time than this (e.g. 5m, 1h); '
                              'they are grouped into a "short intervals" summary row')
+    parser.add_argument('--sort', metavar='KEY', choices=['tag', 'time'],
+                        help='Row order: "tag" (default, alphabetical) or "time" '
+                             '(descending, heaviest first; ties fall back to tag)')
+    parser.add_argument('--unmatched', metavar='LABEL',
+                        help='Collect time on in-scope intervals where no tag matched '
+                             '--regex under this label, instead of dropping it')
     parser.add_argument('timew_args', nargs='*', metavar='ARG',
                         help='Arguments to pass to timew (tags, date ranges, etc.)')
 
@@ -142,6 +150,10 @@ def reexec_via_timew(args):
         env['SPLIT'] = '1'
     if args.min_duration:
         env['MIN_DURATION'] = args.min_duration
+    if args.sort:
+        env['SORT'] = args.sort
+    if args.unmatched:
+        env['UNMATCHED'] = args.unmatched
 
     # Build timew command
     script_name = os.path.basename(sys.argv[0])
@@ -195,6 +207,11 @@ def calculate_totals(input_stream, args):
     CONCAT = get_option('CONCAT', args, configuration)
     SPLIT = get_option('SPLIT', args, configuration)
     MIN_DURATION = get_option('MIN_DURATION', args, configuration)
+    SORT = get_option('SORT', args, configuration) or 'tag'
+    if SORT not in ('tag', 'time'):
+        print(f"Invalid --sort value: {SORT}", file=sys.stderr)
+        sys.exit(1)
+    UNMATCHED = get_option('UNMATCHED', args, configuration)
 
     min_duration_secs = None
     if MIN_DURATION:
@@ -265,22 +282,30 @@ def calculate_totals(input_stream, args):
 
         tracked = end - start
 
+        # Exclusions first: an interval knocked out by --negregex or --killtags
+        # is out of scope entirely, and must not resurface as "unmatched".
         if NEGREGEX:
             if any(re.search(NEGREGEX, tag) for tag in obj["tags"]):
-                continue
-
-        if REGEX:
-            if not any(re.search(REGEX, tag) for tag in obj["tags"]):
-                continue
-
-        if wanted_tags:
-            if not wanted_tags.intersection(set(obj.get("tags", []))):
                 continue
 
         if KILLTAGS:
             killtags = {t.strip() for t in KILLTAGS.split(",")}
             if killtags.intersection(set(obj["tags"])):
                 continue
+
+        # --tags picks which intervals the report is about at all, so an
+        # interval it rejects is out of scope, not uncategorised.
+        if wanted_tags:
+            if not wanted_tags.intersection(set(obj.get("tags", []))):
+                continue
+
+        # --regex picks which tags get a row.  An interval in scope but with no
+        # tag matching it would simply vanish, quietly shrinking the total;
+        # --unmatched gives that time a row of its own instead.
+        if REGEX and not any(re.search(REGEX, tag) for tag in obj["tags"]):
+            if UNMATCHED:
+                totals[UNMATCHED] += tracked
+            continue
 
         if IGNORETAGS:
             for tag in (t.strip() for t in IGNORETAGS.split(",")):
@@ -352,7 +377,13 @@ def calculate_totals(input_stream, args):
 
     # Compose table rows.
     grand_total = 0
-    for tag in sorted(totals):
+    if SORT == 'time':
+        # Heaviest first; equal totals fall back to the tag, so the order is
+        # stable rather than whatever the dict happened to hold.
+        order = sorted(totals, key=lambda t: (-totals[t].total_seconds(), t))
+    else:
+        order = sorted(totals)
+    for tag in order:
         seconds = int(totals[tag].total_seconds())
         formatted = format_seconds(seconds)
         grand_total += seconds
