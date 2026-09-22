@@ -366,3 +366,40 @@ class TestRunEditorAndExecute:
         # Second call should be bash
         bash_call = mock_run.call_args_list[1]
         assert bash_call[0][0][0] == "bash"
+
+    def test_runs_with_errexit(self, tmp_path):
+        """A failing line must not be masked by a later line that succeeds.
+
+        Plain `bash script` only reports the last command's status, so a
+        `timew track` that failed halfway down read as success.
+        """
+        script = "#!/bin/bash\nfalse\ntrue\n"
+        with mock.patch.dict("os.environ", {"EDITOR": "true"}):
+            assert aw_report.run_editor_and_execute(script) is False
+
+    def test_nothing_to_run_is_not_a_failure(self):
+        """All lines commented out is a choice, not an error."""
+        script = "#!/bin/bash\n# timew track :adjust x - y work\n"
+        with mock.patch.dict("os.environ", {"EDITOR": "true"}):
+            assert aw_report.run_editor_and_execute(script) is None
+
+
+class TestEditModeExitCode:
+    intervals = [
+        {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["work"]},
+    ]
+
+    @pytest.mark.parametrize("outcome, code", [(True, None), (None, None), (False, 1)])
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    def test_failed_script_exits_nonzero(self, mock_aw, outcome, code):
+        """A caller has to be able to tell that the edited commands failed."""
+        with mock.patch.object(aw_report, "run_editor_and_execute", return_value=outcome):
+            with mock.patch("sys.stdin", make_input(self.intervals)):
+                with mock.patch("sys.argv", ["aw-report.py"]):
+                    with mock.patch.dict("os.environ", {"EDIT_MODE": "1"}):
+                        if code is None:
+                            aw_report.main()
+                        else:
+                            with pytest.raises(SystemExit) as exc:
+                                aw_report.main()
+                            assert exc.value.code == code

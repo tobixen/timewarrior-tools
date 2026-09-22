@@ -213,7 +213,9 @@ def format_local_time(utc_str):
 def run_editor_and_execute(script_content):
     """Write script to temp file, open editor, execute on save.
 
-    Returns True if the script was executed, False if aborted.
+    Returns True if the script ran cleanly, False if the editor or any line
+    of the script failed, and None if there was nothing to run.  Nothing to
+    run is a choice, not an error, so it must not look like one to a caller.
     """
     import tempfile
 
@@ -236,17 +238,21 @@ def run_editor_and_execute(script_content):
 
         if not edited_content.strip():
             print("Script is empty, nothing to execute.")
-            return False
+            return None
 
         # Count uncommented timew commands
         cmd_count = sum(1 for line in edited_content.splitlines()
                        if line.strip() and not line.strip().startswith('#'))
         if cmd_count == 0:
             print("No commands to execute (all lines commented out).")
-            return False
+            return None
 
         print(f"Executing {cmd_count} command(s)...")
-        result = subprocess.run(['bash', temp_path])
+        # -e: without it only the last line's status comes back, and a
+        # `timew track` that failed halfway down reads as success.
+        result = subprocess.run(['bash', '-e', temp_path])
+        if result.returncode != 0:
+            print(f"Script failed with exit code {result.returncode}.", file=sys.stderr)
         return result.returncode == 0
     finally:
         os.unlink(temp_path)
@@ -380,7 +386,8 @@ def main():
         if skipped_count:
             script_lines.append(f"# ({skipped_count} interval(s) shorter than {min_duration_str} skipped)")
         script_content = "\n".join(script_lines) + "\n"
-        run_editor_and_execute(script_content)
+        if run_editor_and_execute(script_content) is False:
+            sys.exit(1)
     else:
         if skipped_count:
             print(f"({skipped_count} interval(s) shorter than {min_duration_str} skipped)")
