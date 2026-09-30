@@ -17,3 +17,12 @@
   Found while building a work-only report in `mydiary.sh`, worked around there
   by withholding aliases (`ONLY_KEYS`).  The two options should be independent
   — aliases are display, `--tags` is selection.
+* `diary.py` sums every row into Total, so an interval carrying two wanted
+  tags is counted once per tag, again in the `a,b` row and again in
+  `dupes!`: a 1h interval tagged work and personal shows Total 4.0h.
+  Decide whether Total is wall-clock time; there are no tests for diary.py.
+* `diary.py` warns "Report spans multiple days" for `:yesterday`, because
+  `temp.report.end` is the following midnight.
+* `aw-report.py` prints local times without a UTC offset in the
+  `timew track :adjust` hint and the `--edit` script, which is ambiguous in
+  the repeated hour when DST ends.
