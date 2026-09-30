@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     neighbours silently got the new one
   - Intervals are now looked up by start time and each change is verified, and
     the command exits non-zero if anything unexpected gained or lost a tag
+- `summarize.py`: `--regex`, `--negregex` and `--killtags` no longer crash on a
+  report that includes an untagged interval
 
 ### Added
 - `summarize.py`: `--sort=time` orders rows by total, heaviest first, instead of

@@ -291,3 +291,32 @@ class TestUnmatched:
         args = default_args(regex="^4[a-z]", unmatched="ingen kategori")
         output = summarize.calculate_totals(make_input(intervals), args)
         assert "ingen kategori" not in "\n".join(output)
+
+
+class TestUntaggedIntervals:
+    """timew export leaves the `tags` key out entirely for an untagged interval."""
+
+    INTERVALS = [
+        {"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": ["4RL", "4meetings"]},
+        {"start": "20250115T090000Z", "end": "20250115T093000Z"},
+    ]
+
+    @pytest.mark.parametrize(
+        "option", [{"regex": "^4[a-z]"}, {"negregex": "^x"}, {"killtags": "x"}]
+    )
+    def test_filters_do_not_crash(self, option):
+        output = summarize.calculate_totals(make_input(self.INTERVALS), default_args(**option))
+        assert "4meetings" in "\n".join(output)
+
+    def test_untagged_interval_is_unmatched(self):
+        args = default_args(regex="^4[a-z]", unmatched="ingen kategori")
+        output = summarize.calculate_totals(make_input(self.INTERVALS), args)
+        bucket = [l for l in output if l.startswith("ingen kategori")]
+        assert len(bucket) == 1
+        assert "0:30:00" in bucket[0]
+
+
+def test_invalid_min_duration_exits():
+    with pytest.raises(SystemExit) as excinfo:
+        summarize.calculate_totals(make_input([]), default_args(min_duration="soon"))
+    assert excinfo.value.code == 1

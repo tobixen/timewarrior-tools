@@ -218,6 +218,7 @@ def calculate_totals(input_stream, args):
         min_duration_secs = parse_duration(MIN_DURATION)
         if min_duration_secs is None:
             print(f"Invalid --min-duration value: {MIN_DURATION}", file=sys.stderr)
+            sys.exit(1)
 
     # Parse TAGS into a set for OR filtering
     wanted_tags = {t.strip() for t in TAGS.split(",")} if TAGS else None
@@ -277,6 +278,8 @@ def calculate_totals(input_stream, args):
     untagged = None
 
     for obj in j:
+        # timew export omits the key entirely for an untagged interval.
+        obj.setdefault("tags", [])
         start = datetime.datetime.strptime(obj["start"], DATEFORMAT).replace(tzinfo=from_zone)
         end = datetime.datetime.strptime(obj["end"], DATEFORMAT).replace(tzinfo=from_zone)
 
@@ -296,7 +299,7 @@ def calculate_totals(input_stream, args):
         # --tags picks which intervals the report is about at all, so an
         # interval it rejects is out of scope, not uncategorised.
         if wanted_tags:
-            if not wanted_tags.intersection(set(obj.get("tags", []))):
+            if not wanted_tags.intersection(set(obj["tags"])):
                 continue
 
         # --regex picks which tags get a row.  An interval in scope but with no
@@ -312,7 +315,7 @@ def calculate_totals(input_stream, args):
                 if tag in obj["tags"]:
                     obj["tags"].remove(tag)
 
-        if "tags" not in obj or obj["tags"] == []:
+        if not obj["tags"]:
             if untagged:
                 untagged += tracked
             else:
