@@ -403,3 +403,42 @@ class TestEditModeExitCode:
                             with pytest.raises(SystemExit) as exc:
                                 aw_report.main()
                             assert exc.value.code == code
+
+
+class TestTrackCommandQuoting:
+    """The track command is run by bash, so every tag must survive the shell."""
+
+    TAGS = ["plain", "two words", "$(touch pwned)", "it's", 'say "hi"', "a;b&c*"]
+
+    @mock.patch.object(aw_report, "run_aw_report", return_value="data")
+    @mock.patch.object(aw_report, "run_editor_and_execute")
+    def test_tags_round_trip_through_the_shell(self, mock_editor, mock_aw):
+        import shlex
+
+        intervals = [{"start": "20250115T080000Z", "end": "20250115T090000Z", "tags": self.TAGS}]
+        with mock.patch("sys.stdin", make_input(intervals)):
+            with mock.patch("sys.argv", ["aw-report.py"]):
+                with mock.patch.dict("os.environ", {"EDIT_MODE": "1"}):
+                    aw_report.main()
+
+        script = mock_editor.call_args[0][0]
+        [track] = [l for l in script.splitlines() if l.startswith("timew track")]
+        assert shlex.split(track)[-len(self.TAGS):] == self.TAGS
+
+
+class TestEditorSelection:
+    def test_editor_with_arguments(self):
+        script = "#!/bin/bash\n# nothing\n"
+        with mock.patch.dict("os.environ", {"EDITOR": "true --wait", "VISUAL": ""}):
+            assert aw_report.run_editor_and_execute(script) is None
+
+    def test_visual_is_preferred_over_editor(self):
+        script = "#!/bin/bash\n# nothing\n"
+        with mock.patch.dict("os.environ", {"VISUAL": "true", "EDITOR": "false"}):
+            assert aw_report.run_editor_and_execute(script) is None
+
+    def test_missing_editor_is_a_failure_not_a_traceback(self, capsys):
+        script = "#!/bin/bash\n# nothing\n"
+        with mock.patch.dict("os.environ", {"EDITOR": "no-such-editor-xyz", "VISUAL": ""}):
+            assert aw_report.run_editor_and_execute(script) is False
+        assert "no-such-editor-xyz" in capsys.readouterr().err

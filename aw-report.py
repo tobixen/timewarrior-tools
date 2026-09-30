@@ -19,6 +19,7 @@ import argparse
 import datetime
 import json
 import os
+import shlex
 import subprocess
 import sys
 
@@ -219,7 +220,9 @@ def run_editor_and_execute(script_content):
     """
     import tempfile
 
-    editor = os.environ.get('EDITOR', os.environ.get('VISUAL', 'vi'))
+    # VISUAL before EDITOR, by convention, and either may carry arguments
+    # (`emacsclient -t`, `code --wait`).
+    editor = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
 
     with tempfile.NamedTemporaryFile(
         mode='w', suffix='.sh', prefix='aw-report-', delete=False
@@ -228,7 +231,11 @@ def run_editor_and_execute(script_content):
         temp_path = f.name
 
     try:
-        result = subprocess.run([editor, temp_path])
+        try:
+            result = subprocess.run([*editor, temp_path])
+        except OSError as e:
+            print(f"Cannot run editor {shlex.join(editor)}: {e}", file=sys.stderr)
+            return False
         if result.returncode != 0:
             print(f"Editor exited with code {result.returncode}, aborting.", file=sys.stderr)
             return False
@@ -270,7 +277,6 @@ def run_aw_report(start_utc, end_utc, extra_args, min_event_duration_secs=None):
            f'--from={from_iso}', f'--to={to_iso}']
 
     if extra_args:
-        import shlex
         cmd.extend(shlex.split(extra_args))
 
     if min_event_duration_secs is not None:
@@ -361,7 +367,8 @@ def main():
         tags_str = ", ".join(tags) if tags else "(no tags)"
         time_str = f"{format_local_time(start)} - {format_local_time(end)}"
         duration_str = format_duration(duration_secs)
-        tags_arg = " ".join(f'"{t}"' if " " in t else t for t in tags)
+        # bash runs this line, so every tag must be quoted for it.
+        tags_arg = " ".join(shlex.quote(t) for t in tags)
         track_cmd = f"timew track :adjust {time_str} {tags_arg}".rstrip()
 
         if edit_mode:
