@@ -1,3 +1,10 @@
 #!/bin/bash
 
-[ $(timew get dom.active.tag.1) == "afk" ] || [ $(timew get dom.active.tag.2) == "afk" ] || [ $(timew get dom.active.tag.3) == "afk" ] || timew start afk
+# Start "afk" unless the active interval already carries it.
+if [ "$(timew get dom.active)" == "1" ]; then
+    count=$(timew get dom.active.tags.count)
+    for ((i = 1; i <= count; i++)); do
+        [ "$(timew get "dom.active.tags.$i")" == "afk" ] && exit 0
+    done
+fi
+timew start afk

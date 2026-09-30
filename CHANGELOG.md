@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     the command exits non-zero if anything unexpected gained or lost a tag
 - `summarize.py`: `--regex`, `--negregex` and `--killtags` no longer crash on a
   report that includes an untagged interval
+- `timew-short.sh waybar`: Output stays valid JSON when a tag contains `"` or `\`
+- `timew-start-afk`: No longer errors on multi-word tags or warns about the
+  deprecated `dom.active.tag` reference, and checks every active tag, not
+  just the first three
 
 ### Added
 - `summarize.py`: `--sort=time` orders rows by total, heaviest first, instead of
