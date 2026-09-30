@@ -23,6 +23,9 @@ A timewarrior report extension that summarizes tracked time by tag.
 | `--ignoretags` | `IGNORETAGS` | Remove these tags from output (comma-separated) |
 | `--concat` | `CONCAT` | Combine all tags on an interval into a single key |
 | `--split` | `SPLIT` | Divide time equally among tags on an interval |
+| `--min-duration` | `MIN_DURATION` | Fold tags with less total time than this (e.g. `5m`, `1h`) into one "(short intervals)" row |
+| `--sort` | `SORT` | Row order: `tag` (default, alphabetical) or `time` (heaviest first) |
+| `--unmatched` | `UNMATCHED` | Give in-scope time with no tag matching `--regex` a row under this label instead of dropping it |
 
 **Usage:**
 
@@ -34,6 +37,32 @@ REGEX="^4" timew report summarize.py :week
 # Direct invocation (auto re-execs via timew report)
 summarize.py --regex="^4" --concat :yesterday
 summarize.py --killtags="afk,break" :week
+```
+
+### aw-report.py
+
+A timewarrior report extension that shows, for every timewarrior interval, what
+[ActivityWatch](https://activitywatch.net/) recorded during it.  It needs
+[aw-export-timewarrior](https://github.com/tobixen/aw-export-timewarrior) on the `PATH`.
+
+**Options** (via command-line or environment variables):
+
+| Option | Env Var | Description |
+|--------|---------|-------------|
+| `--aw-args` | `AW_ARGS` | Extra arguments for `aw-export-timewarrior report` (one quoted string) |
+| `--min-duration` | `MIN_DURATION` | Skip intervals shorter than this (e.g. `5m`) |
+| `--min-event-duration` | `MIN_EVENT_DURATION` | Hide ActivityWatch events shorter than this (e.g. `2s`) |
+| `--edit` | `EDIT_MODE=1` | Open `$VISUAL`/`$EDITOR` on a script of `timew track :adjust` commands, one per interval with the activity as comments, and run it with `bash -e` on save.  Exits 1 if the editor or any command fails |
+
+With colour on, each interval is followed by the `timew track :adjust` command
+that would overwrite it.
+
+**Usage:**
+
+```bash
+timew report aw-report.py :yesterday
+aw-report.py --min-duration=5m --min-event-duration=2s :yesterday
+aw-report.py --edit :yesterday
 ```
 
 ### diary.py
@@ -146,8 +175,12 @@ make uninstall
 ```
 
 This installs:
-- `summarize.py`, `diary.py` to `~/.config/timewarrior/extensions/`
-- `timew-change-tag`, `timew-undo-check`, `timew-short.sh`, `timew-start-afk` to `~/.local/bin/`
+- `summarize.py`, `diary.py`, `aw-report.py` to `~/.config/timewarrior/extensions/`
+- the same three plus `timew-change-tag`, `timew-undo-check`, `timew-short.sh`, `timew-start-afk` to `~/.local/bin/`, for direct invocation
+
+`summarize.py`, `aw-report.py` and `timew-undo-check` support shell tab
+completion when [argcomplete](https://github.com/kislyuk/argcomplete) is
+installed and activated (`activate-global-python-argcomplete`).
 
 ## Related
 

@@ -23,6 +23,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   just the first three
 
 ### Added
+- `aw-report.py`: New report extension showing the ActivityWatch activity
+  recorded during each timewarrior interval (needs aw-export-timewarrior)
+  - `--min-duration` skips short intervals, `--min-event-duration` hides short
+    window events, `--aw-args` passes options through
+  - `--edit` opens an editor on the matching `timew track :adjust` commands
+    and runs them on save
+- Shell tab completion for `summarize.py`, `aw-report.py` and
+  `timew-undo-check` when argcomplete is installed
+- `summarize.py`: `--min-duration` folds tags with little total time into a
+  single "(short intervals)" row
 - `summarize.py`: `--sort=time` orders rows by total, heaviest first, instead of
   alphabetically by tag
 - `summarize.py`: `--unmatched=LABEL` collects time on intervals that are in
